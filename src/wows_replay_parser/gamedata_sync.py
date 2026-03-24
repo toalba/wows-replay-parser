@@ -22,7 +22,8 @@ def extract_build_id(game_version: str) -> str | None:
     """
     parts = game_version.replace(".", ",").split(",")
     if parts:
-        return parts[-1].strip()
+        build = parts[-1].strip()
+        return build if build.isdigit() else None
     return None
 
 

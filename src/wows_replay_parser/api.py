@@ -106,14 +106,24 @@ def parse_replay(
 
     # Auto-sync gamedata if requested
     if auto_update_gamedata:
-        # Read replay header first to get version
-        pre_reader = ReplayReader()
-        pre_replay = pre_reader.read(replay_path)
-        # gamedata_path is entity_defs/, repo root is 3 levels up
-        gamedata_root = gamedata_path.parent.parent.parent
+        import logging
+        import warnings
+
         from wows_replay_parser.gamedata_sync import sync_gamedata
 
-        sync_gamedata(gamedata_root, pre_replay.game_version)
+        pre_replay = ReplayReader().read(replay_path)
+        # gamedata_path is entity_defs/, repo root is 3 levels up:
+        # <root>/data/scripts_entity/entity_defs
+        gamedata_root = gamedata_path.parent.parent.parent
+        ok = sync_gamedata(gamedata_root, pre_replay.game_version)
+        if not ok:
+            logging.getLogger(__name__).warning(
+                "Gamedata sync failed; proceeding with current version",
+            )
+            warnings.warn(
+                "Gamedata sync failed; version may not match replay",
+                stacklevel=2,
+            )
 
     # Load gamedata
     aliases = AliasRegistry.from_file(gamedata_path / "alias.xml")

@@ -176,7 +176,6 @@ class GameStateTracker:
         """
         running: dict[int, dict[str, Any]] = {}
         history_idx = 0
-        n_history = len(self._history)
 
         # Per-entity position cursors: entity_id → index into
         # self._positions[entity_id]
@@ -187,7 +186,7 @@ class GameStateTracker:
         for t in timestamps:
             # Apply property changes up to time t
             while (
-                history_idx < n_history
+                history_idx < len(self._history)
                 and self._history[history_idx].timestamp <= t
             ):
                 change = self._history[history_idx]
@@ -212,49 +211,37 @@ class GameStateTracker:
                     entry = positions[cursor - 1]
                     pos_cache[eid] = (entry[1], entry[2])
 
-            # Build GameState without bisect calls
+            # Build GameState using cached positions
             ships: dict[int, ShipState] = {}
             battle = BattleState()
             for entity_id, props in running.items():
                 etype = self._entity_types.get(entity_id, "")
                 if etype == "Vehicle":
-                    pos, yaw = pos_cache.get(
-                        entity_id, ((0.0, 0.0, 0.0), 0.0),
-                    )
+                    cached = pos_cache.get(entity_id)
+                    pos = cached[0] if cached else (0.0, 0.0, 0.0)
+                    yaw = cached[1] if cached else 0.0
                     ships[entity_id] = ShipState(
                         entity_id=entity_id,
-                        health=float(
-                            props.get("health", 0) or 0,
-                        ),
-                        max_health=float(
-                            props.get("maxHealth", 0) or 0,
-                        ),
+                        health=float(props.get("health", 0)),
+                        max_health=float(props.get("maxHealth", 0)),
                         regeneration_health=float(
-                            props.get(
-                                "regenerationHealth", 0,
-                            ) or 0,
+                            props.get("regenerationHealth", 0),
                         ),
                         regenerated_health=float(
-                            props.get(
-                                "regeneratedHealth", 0,
-                            ) or 0,
+                            props.get("regeneratedHealth", 0),
                         ),
-                        is_alive=bool(
-                            props.get("isAlive", True),
-                        ),
-                        team_id=int(
-                            props.get("teamId", 0) or 0,
-                        ),
+                        is_alive=bool(props.get("isAlive", True)),
+                        team_id=int(props.get("teamId", 0)),
                         visibility_flags=int(
-                            props.get("visibilityFlags", 0) or 0,
+                            props.get("visibilityFlags", 0),
                         ),
                         burning_flags=int(
-                            props.get("burningFlags", 0) or 0,
+                            props.get("burningFlags", 0),
                         ),
                         position=pos,
                         yaw=yaw,
                         speed=float(
-                            props.get("serverSpeedRaw", 0) or 0,
+                            props.get("serverSpeedRaw", 0),
                         ),
                     )
                 elif etype == "BattleLogic":

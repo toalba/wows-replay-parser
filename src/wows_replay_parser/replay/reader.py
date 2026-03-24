@@ -54,19 +54,20 @@ class ReplayFile:
 
     @property
     def game_version(self) -> str:
-        return self.meta.get("clientVersionFromExe", "unknown")
+        return str(self.meta.get("clientVersionFromExe", "unknown"))
 
     @property
     def map_name(self) -> str:
-        return self.meta.get("mapName", "unknown")
+        return str(self.meta.get("mapName", "unknown"))
 
     @property
     def player_name(self) -> str:
-        return self.meta.get("playerName", "unknown")
+        return str(self.meta.get("playerName", "unknown"))
 
     @property
     def players(self) -> list[dict[str, Any]]:
-        return self.meta.get("vehicles", [])
+        result: Any = self.meta.get("vehicles", [])
+        return result  # type: ignore[no-any-return]
 
 
 class ReplayReader:
@@ -142,7 +143,7 @@ class ReplayReader:
             from Crypto.Cipher import Blowfish
         except ImportError:
             try:
-                from Cryptodome.Cipher import Blowfish
+                from Cryptodome.Cipher import Blowfish  # type: ignore[no-redef]
             except ImportError:
                 return data
 
