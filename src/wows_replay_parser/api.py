@@ -1,0 +1,129 @@
+"""Top-level replay parsing API."""
+
+from __future__ import annotations
+
+from bisect import bisect_left, bisect_right
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypeVar
+
+from wows_replay_parser.events.models import GameEvent
+from wows_replay_parser.events.stream import EventStream
+from wows_replay_parser.gamedata.alias_registry import AliasRegistry
+from wows_replay_parser.gamedata.def_loader import DefLoader
+from wows_replay_parser.gamedata.entity_registry import EntityRegistry
+from wows_replay_parser.gamedata.schema_builder import SchemaBuilder
+from wows_replay_parser.packets.decoder import PacketDecoder
+from wows_replay_parser.packets.type_id_detector import detect_type_id_mapping
+from wows_replay_parser.replay.reader import ReplayReader
+from wows_replay_parser.roster import PlayerInfo, build_roster
+from wows_replay_parser.state.tracker import GameStateTracker
+
+if TYPE_CHECKING:
+    from wows_replay_parser.packets.types import Packet
+    from wows_replay_parser.state.models import BattleState, GameState, ShipState
+
+_T = TypeVar("_T", bound=GameEvent)
+
+
+@dataclass
+class ParsedReplay:
+    """Fully parsed replay with events, packets, and state queries."""
+
+    meta: dict[str, Any]
+    players: list[PlayerInfo]
+    map_name: str
+    game_version: str
+    duration: float
+    events: list[GameEvent]
+    packets: list[Packet]
+    _tracker: GameStateTracker = field(repr=False, compare=False)
+
+    def state_at(self, t: float) -> GameState:
+        """Get full game state snapshot at timestamp t."""
+        return self._tracker.state_at(t)
+
+    def ship_state(self, entity_id: int, t: float) -> ShipState:
+        """Get a specific ship's state at timestamp t."""
+        return self._tracker.ship_state(entity_id, t)
+
+    def battle_state(self, t: float) -> BattleState:
+        """Get battle-level state at timestamp t."""
+        return self._tracker.battle_state(t)
+
+    def events_of_type(self, cls: type[_T]) -> list[_T]:
+        """Filter events by type."""
+        return [e for e in self.events if isinstance(e, cls)]
+
+    def events_in_range(
+        self,
+        start: float,
+        end: float,
+    ) -> list[GameEvent]:
+        """Get events in a time range (inclusive)."""
+        timestamps = [e.timestamp for e in self.events]
+        lo = bisect_left(timestamps, start)
+        hi = bisect_right(timestamps, end)
+        return self.events[lo:hi]
+
+
+def parse_replay(
+    replay_path: str | Path,
+    gamedata_path: str | Path,
+) -> ParsedReplay:
+    """Parse a .wowsreplay file with full state tracking.
+
+    Args:
+        replay_path: Path to the .wowsreplay file.
+        gamedata_path: Path to wows-gamedata entity_defs dir.
+
+    Returns:
+        ParsedReplay with events, packets, and state queries.
+    """
+    replay_path = Path(replay_path)
+    gamedata_path = Path(gamedata_path)
+
+    # Load gamedata
+    aliases = AliasRegistry.from_file(gamedata_path / "alias.xml")
+    loader = DefLoader(gamedata_path)
+    entity_defs = loader.load_all()
+
+    registry = EntityRegistry(aliases)
+    for entity_def in entity_defs.values():
+        registry.register(entity_def)
+
+    # Read replay file
+    reader = ReplayReader()
+    replay = reader.read(replay_path)
+
+    # Auto-detect type_id → entity mapping
+    type_mapping = detect_type_id_mapping(replay.packet_data, registry)
+    for tidx, name in type_mapping.items():
+        registry.register_type_id(tidx, name)
+
+    # Decode packets with state tracking
+    tracker = GameStateTracker()
+    schema = SchemaBuilder(aliases, registry)
+    decoder = PacketDecoder(schema, registry, tracker=tracker)
+    packets = decoder.decode_stream(replay.packet_data)
+
+    # Generate events
+    stream = EventStream(tracker=tracker)
+    events = stream.process(packets)
+
+    # Build player roster
+    players = build_roster(replay.meta, tracker)
+
+    # Compute duration from max packet timestamp
+    duration = max((p.timestamp for p in packets), default=0.0)
+
+    return ParsedReplay(
+        meta=replay.meta,
+        players=players,
+        map_name=replay.map_name,
+        game_version=replay.game_version,
+        duration=duration,
+        events=events,
+        packets=packets,
+        _tracker=tracker,
+    )
