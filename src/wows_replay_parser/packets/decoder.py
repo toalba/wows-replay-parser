@@ -48,6 +48,7 @@ class PacketDecoder:
         PacketType.ENTITY_METHOD: "_handle_method_call",
         PacketType.ENTITY_PROPERTY: "_handle_property_update",
         PacketType.POSITION: "_handle_position",
+        PacketType.NON_VOLATILE_POSITION: "_handle_non_volatile_position",
     }
 
     def __init__(
@@ -288,6 +289,26 @@ class PacketDecoder:
                     prop.name,
                     exc_info=True,
                 )
+
+    def _handle_non_volatile_position(self, packet: Packet) -> None:
+        """
+        NonVolatilePosition (0x2A) — smoke screens, weather zones.
+
+        Same layout as Position but WITHOUT direction and is_on_ground:
+        entity_id(u32) + space_id(u32) + position(3xf32) + rotation(3xf32)
+        """
+        if len(packet.raw_payload) < 20:
+            return
+        entity_id, _space_id = struct.unpack("<II", packet.raw_payload[:8])
+        x, y, z = struct.unpack("<fff", packet.raw_payload[8:20])
+        packet.entity_id = entity_id
+        packet.position = (x, y, z)
+        entity_type = self._entity_types.get(entity_id)
+        if entity_type:
+            packet.entity_type = entity_type
+        if len(packet.raw_payload) >= 32:
+            rx, ry, rz = struct.unpack_from("<fff", packet.raw_payload, 20)
+            packet.rotation = (rx, ry, rz)
 
     def _handle_position(self, packet: Packet) -> None:
         """

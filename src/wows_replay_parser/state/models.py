@@ -32,6 +32,13 @@ class ShipState:
     position: tuple[float, float, float] = (0.0, 0.0, 0.0)
     yaw: float = 0.0
     speed: float = 0.0
+    # MinimapVisionInfo data (Trap 5/6)
+    minimap_x: float = 0.0  # world x from minimap vision
+    minimap_z: float = 0.0  # world z from minimap vision
+    minimap_heading: float = 0.0  # heading in radians
+    is_detected: bool = False  # whether ship is visible on minimap
+    # Death position cache (Trap 13)
+    death_position: tuple[float, float, float] | None = None
 
 
 @dataclass

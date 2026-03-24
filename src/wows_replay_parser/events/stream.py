@@ -25,6 +25,7 @@ from wows_replay_parser.events.models import (
     DamageEvent,
     DeathEvent,
     GameEvent,
+    MinimapVisionEvent,
     PositionEvent,
     PotentialDamageEvent,
     PropertyUpdateEvent,
@@ -365,6 +366,66 @@ def _cap_contest(pkt: Packet) -> CapContestEvent:
     )
 
 
+def _minimap_vision_info(pkt: Packet) -> list[MinimapVisionEvent]:
+    """updateMinimapVisionInfo: ARRAY of packed vehicle vision data.
+
+    Each entry is a dict with vehicleID (ENTITY_ID) and packedData (UINT32).
+    The packedData bitfield (Trap 6):
+      bits 0-10:  raw_x (11 bits)
+      bits 11-21: raw_y (11 bits)
+      bits 22-29: heading (8 bits)
+      bit 30:     unknown
+      bit 31:     is_disappearing
+    """
+    events: list[MinimapVisionEvent] = []
+    args = pkt.method_args or {}
+    entries = _get(args, "arg0", [])
+    if isinstance(entries, dict):
+        entries = [entries]
+    if not isinstance(entries, list):
+        return events
+
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        vehicle_id = entry.get("vehicleID", 0)
+        packed = int(entry.get("packedData", 0))
+
+        # Unpack bitfield
+        raw_x = packed & 0x7FF           # bits 0-10
+        raw_y = (packed >> 11) & 0x7FF   # bits 11-21
+        raw_heading = (packed >> 22) & 0xFF  # bits 22-29
+        is_disappearing = bool(packed & (1 << 31))  # bit 31
+
+        # Sentinel check: raw_x==0 && raw_y==0 means no valid position
+        is_visible = not (raw_x == 0 and raw_y == 0)
+
+        # Heading: 8-bit → degrees
+        heading_degrees = raw_heading / 256.0 * 360.0 - 180.0
+
+        # Position: raw → stored → world
+        # stored_x = raw_x / 512.0 - 1.5
+        # world_x = (stored_x + 1.5) * 512.0 / 2047.0 * 5000.0 - 2500.0
+        # Simplified: world = raw / 2047.0 * 5000.0 - 2500.0
+        world_x = raw_x / 2047.0 * 5000.0 - 2500.0 if is_visible else 0.0
+        world_z = raw_y / 2047.0 * 5000.0 - 2500.0 if is_visible else 0.0
+
+        events.append(MinimapVisionEvent(
+            timestamp=pkt.timestamp,
+            entity_id=pkt.entity_id,
+            raw_data=entry,
+            vehicle_entity_id=vehicle_id,
+            raw_x=raw_x,
+            raw_y=raw_y,
+            world_x=world_x,
+            world_z=world_z,
+            heading_degrees=heading_degrees,
+            is_disappearing=is_disappearing,
+            is_visible=is_visible,
+        ))
+    return events
+
+
 def _achievement(pkt: Packet) -> AchievementEvent:
     """onAchievementEarned(0:PLAYER_ID, 1:UINT32 achievementId)."""
     args = pkt.method_args or {}
@@ -389,6 +450,8 @@ _METHOD_FACTORIES: dict[str, Callable[[Packet], GameEvent | list[GameEvent]]] = 
     "kill": _death_from_vehicle_kill,
     "onConsumableUsed": _consumable,
     "onAchievementEarned": _achievement,
+    # Minimap vision
+    "updateMinimapVisionInfo": _minimap_vision_info,  # type: ignore[dict-item]
     # Stats events — matched if the method exists in the .def files
     "receiveDamageStat": _potential_damage,
     "receive_CommonCMD": _generic(RawEvent),

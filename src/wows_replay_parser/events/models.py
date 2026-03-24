@@ -236,6 +236,28 @@ class AchievementEvent(GameEvent):
 
 
 @dataclass
+class MinimapVisionEvent(GameEvent):
+    """Minimap vision update from Avatar.updateMinimapVisionInfo.
+
+    Decoded from a packed 32-bit field per vehicle (Trap 6):
+      bits 0-10:  raw_x (11 bits)
+      bits 11-21: raw_y (11 bits)
+      bits 22-29: heading (8 bits)
+      bit 30:     unknown
+      bit 31:     is_disappearing
+    """
+
+    vehicle_entity_id: int = 0
+    raw_x: int = 0
+    raw_y: int = 0
+    world_x: float = 0.0
+    world_z: float = 0.0
+    heading_degrees: float = 0.0
+    is_disappearing: bool = False
+    is_visible: bool = True  # False when raw_x==0 and raw_y==0 (sentinel)
+
+
+@dataclass
 class RibbonEvent(GameEvent):
     """Derived ribbon (P2). Inferred from hit events."""
 

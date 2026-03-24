@@ -44,6 +44,11 @@ class GameStateTracker:
         self._positions: dict[int, list[tuple[float, tuple[float, float, float], float]]] = {}
         self._snapshots: list[tuple[float, dict[int, dict[str, Any]]]] = []
         self._last_snapshot_time: float = -_SNAPSHOT_INTERVAL
+        # Minimap vision info (Trap 5/6): entity_id → list of
+        # (timestamp, world_x, world_z, heading_rad, is_visible, is_disappearing)
+        self._minimap_positions: dict[int, list[tuple[float, float, float, float, bool, bool]]] = {}
+        # Death position cache (Trap 13): entity_id → (position, yaw)
+        self._death_positions: dict[int, tuple[tuple[float, float, float], float]] = {}
 
     def process_packet(self, packet: Packet) -> list[PropertyChange]:
         """Process a decoded packet, updating internal state.
@@ -82,11 +87,10 @@ class GameStateTracker:
                 self._history_timestamps.append(change.timestamp)
                 changes.append(change)
 
-        # Position update
-        elif ptype == PacketType.POSITION:
+        # Position update (0x0A) and NonVolatilePosition (0x2A — Trap 10)
+        elif ptype in (PacketType.POSITION, PacketType.NON_VOLATILE_POSITION):
             if packet.position and packet.entity_id:
                 yaw = 0.0
-                # direction field is being added by Agent 1C — safe fallback
                 direction: tuple[float, float, float] | None = getattr(packet, "direction", None)
                 if direction is not None:
                     dx, _dy, dz = direction
@@ -94,12 +98,18 @@ class GameStateTracker:
                 entry = (packet.timestamp, packet.position, yaw)
                 self._positions.setdefault(packet.entity_id, []).append(entry)
 
-        # Method call — watch for deaths
+        # Method call — watch for deaths and minimap vision
         elif ptype == PacketType.ENTITY_METHOD:
-            if packet.method_name == "receiveVehicleDeath" and packet.method_args:
+            # Minimap vision info (Trap 5/6)
+            if packet.method_name == "updateMinimapVisionInfo" and packet.method_args:
+                self._process_minimap_vision(packet)
+
+            elif packet.method_name == "receiveVehicleDeath" and packet.method_args:
                 # Args: (victim_id, killer_id, reason)
                 victim_id = self._get_arg(packet.method_args, 0)
                 if victim_id is not None:
+                    # Trap 13: cache death position before marking dead
+                    self._cache_death_position(victim_id, packet.timestamp)
                     victim_props = self._current.setdefault(victim_id, {})
                     old = victim_props.get("isAlive", True)
                     victim_props["isAlive"] = False
@@ -117,6 +127,8 @@ class GameStateTracker:
                     changes.append(change)
 
             elif packet.method_name == "kill" and packet.entity_id:
+                # Trap 13: cache death position before marking dead
+                self._cache_death_position(packet.entity_id, packet.timestamp)
                 entity_props = self._current.setdefault(packet.entity_id, {})
                 old = entity_props.get("isAlive", True)
                 entity_props["isAlive"] = False
@@ -186,6 +198,10 @@ class GameStateTracker:
         # Cached last-known position + yaw per entity
         pos_cache: dict[int, tuple[tuple[float, float, float], float]] = {}
 
+        # Minimap vision cursors (Trap 5/6)
+        mm_cursors: dict[int, int] = {}
+        mm_cache: dict[int, tuple[float, float, float, bool]] = {}
+
         for t in timestamps:
             # Apply property changes up to time t
             while (
@@ -214,17 +230,50 @@ class GameStateTracker:
                     entry = positions[cursor - 1]
                     pos_cache[eid] = (entry[1], entry[2])
 
+            # Advance minimap vision cursors
+            for eid, mm_entries in self._minimap_positions.items():
+                cursor = mm_cursors.get(eid, 0)
+                while (
+                    cursor < len(mm_entries)
+                    and mm_entries[cursor][0] <= t
+                ):
+                    cursor += 1
+                mm_cursors[eid] = cursor
+                if cursor > 0:
+                    e = mm_entries[cursor - 1]
+                    is_detected = e[4] and not e[5]
+                    mm_cache[eid] = (e[1], e[2], e[3], is_detected)
+
             # Build GameState using cached positions
             ships: dict[int, ShipState] = {}
             battle = BattleState()
             for entity_id, props in running.items():
                 etype = self._entity_types.get(entity_id, "")
                 if etype == "Vehicle":
-                    cached = pos_cache.get(entity_id)
-                    if cached is None:
-                        continue  # not yet spotted
-                    pos = cached[0]
-                    yaw = cached[1]
+                    is_alive = bool(props.get("isAlive", True))
+
+                    # Trap 13: use death position for dead ships
+                    if not is_alive and entity_id in self._death_positions:
+                        death_pos, death_yaw = self._death_positions[entity_id]
+                        pos = death_pos
+                        yaw = death_yaw
+                    else:
+                        cached = pos_cache.get(entity_id)
+                        if cached is None:
+                            continue  # not yet spotted
+                        pos = cached[0]
+                        yaw = cached[1]
+
+                    # Minimap vision (Trap 5/6)
+                    mm = mm_cache.get(entity_id)
+                    mm_x = mm[0] if mm else 0.0
+                    mm_z = mm[1] if mm else 0.0
+                    mm_h = mm[2] if mm else 0.0
+                    mm_det = mm[3] if mm else False
+
+                    death_pos_val = self._death_positions.get(entity_id)
+                    death_position = death_pos_val[0] if death_pos_val else None
+
                     ships[entity_id] = ShipState(
                         entity_id=entity_id,
                         health=float(props.get("health", 0)),
@@ -235,7 +284,7 @@ class GameStateTracker:
                         regenerated_health=float(
                             props.get("regeneratedHealth", 0),
                         ),
-                        is_alive=bool(props.get("isAlive", True)),
+                        is_alive=is_alive,
                         team_id=int(props.get("teamId", 0)),
                         visibility_flags=int(
                             props.get("visibilityFlags", 0),
@@ -248,6 +297,11 @@ class GameStateTracker:
                         speed=float(
                             props.get("serverSpeedRaw", 0),
                         ),
+                        minimap_x=mm_x,
+                        minimap_z=mm_z,
+                        minimap_heading=mm_h,
+                        is_detected=mm_det,
+                        death_position=death_position,
                     )
                 elif etype == "BattleLogic":
                     battle = self._build_battle_state(
@@ -359,7 +413,98 @@ class GameStateTracker:
         """Get current property values for an entity."""
         return self._current.get(entity_id, {})
 
+    def minimap_at(
+        self, entity_id: int, t: float,
+    ) -> tuple[float, float, float, bool] | None:
+        """Get minimap vision data at time t.
+
+        Returns (world_x, world_z, heading_rad, is_detected) or None
+        if no minimap data exists for this entity.
+        """
+        entries = self._minimap_positions.get(entity_id)
+        if not entries:
+            return None
+
+        timestamps = [e[0] for e in entries]
+        idx = bisect_right(timestamps, t)
+        if idx == 0:
+            return None
+
+        entry = entries[idx - 1]
+        _ts, wx, wz, heading, is_visible, is_disappearing = entry
+        is_detected = is_visible and not is_disappearing
+        return (wx, wz, heading, is_detected)
+
+    def get_death_position(
+        self, entity_id: int,
+    ) -> tuple[tuple[float, float, float], float] | None:
+        """Get cached death position and yaw for an entity.
+
+        Returns (position, yaw) or None if not dead / no position cached.
+        """
+        return self._death_positions.get(entity_id)
+
     # --- Private helpers ---
+
+    def _process_minimap_vision(self, packet: Packet) -> None:
+        """Process updateMinimapVisionInfo method call (Trap 5/6).
+
+        Decodes packed bitfield per vehicle and stores minimap position data.
+        """
+        args = packet.method_args or {}
+        entries = args.get("arg0", [])
+        if isinstance(entries, dict):
+            entries = [entries]
+        if not isinstance(entries, list):
+            return
+
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            vehicle_id = entry.get("vehicleID", 0)
+            packed = int(entry.get("packedData", 0))
+
+            raw_x = packed & 0x7FF
+            raw_y = (packed >> 11) & 0x7FF
+            raw_heading = (packed >> 22) & 0xFF
+            is_disappearing = bool(packed & (1 << 31))
+
+            # Sentinel check
+            is_visible = not (raw_x == 0 and raw_y == 0)
+
+            # Heading: 8-bit → radians
+            heading_deg = raw_heading / 256.0 * 360.0 - 180.0
+            heading_rad = math.radians(heading_deg)
+
+            # Position: raw → world (Trap 6 formula)
+            world_x = raw_x / 2047.0 * 5000.0 - 2500.0 if is_visible else 0.0
+            world_z = raw_y / 2047.0 * 5000.0 - 2500.0 if is_visible else 0.0
+
+            mm_entry = (
+                packet.timestamp, world_x, world_z,
+                heading_rad, is_visible, is_disappearing,
+            )
+            self._minimap_positions.setdefault(vehicle_id, []).append(mm_entry)
+
+    def _cache_death_position(self, entity_id: int, timestamp: float) -> None:
+        """Cache the last known position and yaw at time of death (Trap 13)."""
+        if entity_id in self._death_positions:
+            return  # Already cached (e.g., both receiveVehicleDeath and kill)
+
+        pos = self.position_at(entity_id, timestamp)
+        if pos is None:
+            return
+
+        # Get yaw
+        yaw = 0.0
+        positions = self._positions.get(entity_id)
+        if positions:
+            timestamps = [p[0] for p in positions]
+            idx = bisect_right(timestamps, timestamp)
+            if idx > 0:
+                yaw = positions[idx - 1][2]
+
+        self._death_positions[entity_id] = (pos, yaw)
 
     def _rebuild_state_at(self, t: float) -> dict[int, dict[str, Any]]:
         """Rebuild entity property state at time t from snapshots + history.
@@ -398,16 +543,33 @@ class GameStateTracker:
         self, entity_id: int, props: dict[str, Any], t: float
     ) -> ShipState:
         """Build a ShipState from raw property dict."""
-        pos = self.position_at(entity_id, t) or (0.0, 0.0, 0.0)
+        is_alive = bool(props.get("isAlive", True))
 
-        # Get yaw from position history
-        yaw = 0.0
-        positions = self._positions.get(entity_id)
-        if positions:
-            timestamps = [p[0] for p in positions]
-            idx = bisect_right(timestamps, t)
-            if idx > 0:
-                yaw = positions[idx - 1][2]
+        # Trap 13: use death position for dead ships
+        if not is_alive and entity_id in self._death_positions:
+            death_pos, death_yaw = self._death_positions[entity_id]
+            pos = death_pos
+            yaw = death_yaw
+        else:
+            pos = self.position_at(entity_id, t) or (0.0, 0.0, 0.0)
+            # Get yaw from position history
+            yaw = 0.0
+            positions = self._positions.get(entity_id)
+            if positions:
+                timestamps = [p[0] for p in positions]
+                idx = bisect_right(timestamps, t)
+                if idx > 0:
+                    yaw = positions[idx - 1][2]
+
+        # Minimap vision data (Trap 5/6)
+        minimap_x, minimap_z, minimap_heading, is_detected = 0.0, 0.0, 0.0, False
+        mm = self.minimap_at(entity_id, t)
+        if mm is not None:
+            minimap_x, minimap_z, minimap_heading, is_detected = mm
+
+        # Death position for the state model
+        death_pos_val = self._death_positions.get(entity_id)
+        death_position = death_pos_val[0] if death_pos_val else None
 
         return ShipState(
             entity_id=entity_id,
@@ -415,13 +577,18 @@ class GameStateTracker:
             max_health=float(props.get("maxHealth", 0)),
             regeneration_health=float(props.get("regenerationHealth", 0)),
             regenerated_health=float(props.get("regeneratedHealth", 0)),
-            is_alive=bool(props.get("isAlive", True)),
+            is_alive=is_alive,
             team_id=int(props.get("teamId", 0)),
             visibility_flags=int(props.get("visibilityFlags", 0)),
             burning_flags=int(props.get("burningFlags", 0)),
             position=pos,
             yaw=yaw,
             speed=float(props.get("serverSpeedRaw", 0)),
+            minimap_x=minimap_x,
+            minimap_z=minimap_z,
+            minimap_heading=minimap_heading,
+            is_detected=is_detected,
+            death_position=death_position,
         )
 
     def _build_battle_state(
