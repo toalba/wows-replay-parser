@@ -301,6 +301,44 @@ class GameStateTracker:
             if c.entity_id == entity_id and c.property_name == prop_name
         ]
 
+    def inject_property(
+        self,
+        entity_id: int,
+        prop_name: str,
+        value: Any,
+    ) -> None:
+        """Inject a property value from an external source.
+
+        Used for properties that are set during entity creation
+        (initial state data) rather than via ENTITY_PROPERTY packets,
+        e.g., teamId.
+
+        Updates _current, all snapshots, and prepends to history
+        so both state_at() and iter_states() can see the value.
+        """
+        props = self._current.setdefault(entity_id, {})
+        if prop_name not in props:
+            props[prop_name] = value
+
+        # Also inject into all existing snapshots
+        for _ts, snap_data in self._snapshots:
+            snap_props = snap_data.setdefault(entity_id, {})
+            if prop_name not in snap_props:
+                snap_props[prop_name] = value
+
+        # And prepend to history so iter_states picks it up
+        entity_type = self._entity_types.get(entity_id, "")
+        change = PropertyChange(
+            timestamp=-0.5,
+            entity_id=entity_id,
+            entity_type=entity_type,
+            property_name=prop_name,
+            old_value=None,
+            new_value=value,
+        )
+        self._history.insert(0, change)
+        self._history_timestamps.insert(0, -0.5)
+
     def get_entity_type(self, entity_id: int) -> str | None:
         """Look up entity type name by entity_id."""
         return self._entity_types.get(entity_id)

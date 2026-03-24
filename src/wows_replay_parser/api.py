@@ -153,8 +153,15 @@ def parse_replay(
     stream = EventStream(tracker=tracker)
     events = stream.process(packets)
 
-    # Build player roster
+    # Build player roster and inject team_id into tracker
+    # (teamId is set during entity creation, not as a property
+    # update, so the tracker never sees it from packets)
     players = build_roster(replay.meta, tracker)
+    for player in players:
+        if player.entity_id:
+            tracker.inject_property(
+                player.entity_id, "teamId", player.team_id,
+            )
 
     # Compute duration from max packet timestamp
     duration = max((p.timestamp for p in packets), default=0.0)
