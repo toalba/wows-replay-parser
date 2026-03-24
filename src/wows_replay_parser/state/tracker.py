@@ -68,6 +68,17 @@ class GameStateTracker:
                 self._entity_types[packet.entity_id] = packet.entity_type
                 self._current.setdefault(packet.entity_id, {})
 
+            # Seed initial position from ENTITY_CREATE so vehicles are
+            # visible from spawn (especially the self player and allies
+            # that may not receive POSITION packets immediately).
+            if (
+                ptype == PacketType.ENTITY_CREATE
+                and packet.position is not None
+                and packet.entity_id not in self._positions
+            ):
+                entry = (packet.timestamp, packet.position, 0.0)
+                self._positions.setdefault(packet.entity_id, []).insert(0, entry)
+
         # Property update
         elif ptype == PacketType.ENTITY_PROPERTY:
             if packet.property_name:
@@ -87,14 +98,22 @@ class GameStateTracker:
                 self._history_timestamps.append(change.timestamp)
                 changes.append(change)
 
-        # Position update (0x0A) and NonVolatilePosition (0x2A — Trap 10)
-        elif ptype in (PacketType.POSITION, PacketType.NON_VOLATILE_POSITION):
+        # Position update (0x0A), NonVolatilePosition (0x2A — Trap 10),
+        # and PlayerOrientation (0x2C — self player's ship position)
+        elif ptype in (PacketType.POSITION, PacketType.NON_VOLATILE_POSITION,
+                       PacketType.PLAYER_ORIENTATION):
             if packet.position and packet.entity_id:
                 yaw = 0.0
-                direction: tuple[float, float, float] | None = getattr(packet, "direction", None)
-                if direction is not None:
-                    dx, _dy, dz = direction
-                    yaw = math.atan2(dx, dz)
+                if ptype == PacketType.PLAYER_ORIENTATION:
+                    # PlayerOrientation rotation = (yaw, pitch, roll)
+                    rotation = getattr(packet, "rotation", None)
+                    if rotation is not None:
+                        yaw = rotation[0]
+                else:
+                    direction: tuple[float, float, float] | None = getattr(packet, "direction", None)
+                    if direction is not None:
+                        dx, _dy, dz = direction
+                        yaw = math.atan2(dx, dz)
                 entry = (packet.timestamp, packet.position, yaw)
                 self._positions.setdefault(packet.entity_id, []).append(entry)
 

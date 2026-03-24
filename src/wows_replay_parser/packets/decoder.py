@@ -49,6 +49,7 @@ class PacketDecoder:
         PacketType.ENTITY_PROPERTY: "_handle_property_update",
         PacketType.POSITION: "_handle_position",
         PacketType.NON_VOLATILE_POSITION: "_handle_non_volatile_position",
+        PacketType.PLAYER_ORIENTATION: "_handle_player_orientation",
     }
 
     def __init__(
@@ -309,6 +310,35 @@ class PacketDecoder:
         if len(packet.raw_payload) >= 32:
             rx, ry, rz = struct.unpack_from("<fff", packet.raw_payload, 20)
             packet.rotation = (rx, ry, rz)
+
+    def _handle_player_orientation(self, packet: Packet) -> None:
+        """
+        PlayerOrientation (0x2C) — self player's ship position.
+
+        The BigWorld engine doesn't send Position packets for the player's
+        own entity. Instead, PlayerOrientation carries the self ship's
+        world position and rotation each tick.
+
+        Payload (32 bytes):
+            pid(u32) + parent_id(u32) + position(3xf32) + rotation(3xf32)
+
+        Appears twice per tick: once with parent_id=0 (ship position),
+        once with parent_id!=0 (camera on attached object).
+        Only parent_id=0 entries represent the actual ship position.
+        """
+        if len(packet.raw_payload) < 32:
+            return
+        pid, parent_id = struct.unpack("<II", packet.raw_payload[:8])
+        if parent_id != 0:
+            return  # Camera orientation, not ship position
+        x, y, z = struct.unpack("<fff", packet.raw_payload[8:20])
+        rx, ry, rz = struct.unpack("<fff", packet.raw_payload[20:32])
+        packet.entity_id = pid
+        packet.position = (x, y, z)
+        packet.rotation = (rx, ry, rz)
+        entity_type = self._entity_types.get(pid)
+        if entity_type:
+            packet.entity_type = entity_type
 
     def _handle_position(self, packet: Packet) -> None:
         """

@@ -68,6 +68,27 @@ src/wows_replay_parser/
 entity_id(u32) + space_id(u32) + position(3xf32) + direction(3xf32) + rotation(3xf32) + is_on_ground(u8)
 ```
 
+### PlayerOrientation Packet (0x2C) — 32 bytes
+```
+pid(u32) + parent_id(u32) + position(3xf32) + rotation(3xf32)
+```
+BigWorld does NOT send Position (0x0A) packets for the self player's own entity. Instead, PlayerOrientation carries the self ship's position. Only `parent_id==0` entries are the actual ship position (parent_id!=0 is camera on attached object). Appears twice per tick.
+
+### NonVolatilePosition Packet (0x2A)
+Same as Position but without direction/is_on_ground. Used for smoke screens, weather zones.
+```
+entity_id(u32) + space_id(u32) + position(3xf32) + rotation(3xf32)
+```
+
+### ENTITY_CREATE Inline State Data Format
+After the fixed header (`eid(4) + type_idx(2) + vehicle_id(4) + space_id(4) + pos(12) + rot(12) + state_len(4)` = 42 bytes), the inline state data encodes properties as:
+```
+num_props(u8) + [prop_id(u8) + typed_value] × num_props
+```
+Properties are in sort_size order (smallest first). For Vehicle entities, this is how `teamId` (index 5, INT8, 1 byte) and `owner` (index 36, ENTITY_ID/INT32, 4 bytes) are decoded. Variable-length properties (sort_size=65535) have a u32 length prefix before the data.
+
+**Important:** This is NOT a flag table — it's prop_id followed by the actual typed value bytes. Getting this wrong produces garbage values.
+
 ### Key Alias Structs (from real alias.xml)
 - **SHOT**: pos(V3), pitch(F), speed(F), tarPos(V3), shotID(U16), gunBarrelID(U16), serverTimeLeft(F), shooterHeight(F), hitDistance(F)
 - **SHOTS_PACK**: paramsID(U32), ownerID(I32), salvoID(I32), shots(ARRAY<SHOT>)
@@ -79,10 +100,56 @@ entity_id(u32) + space_id(u32) + position(3xf32) + direction(3xf32) + rotation(3
 - **CAPTURE_LOGIC_STATE**: capturePoints(I16), ownerId(U32), teamId(I8), captureSpeed(F)
 - **TEAMS_DEF**: default(U8), teams(ARRAY<TEAM_STATE>)
 
-### Vehicle Properties (from Vehicle.def + HitLocationManagerOwner interface)
-- health(F32), maxHealth(F32), regenerationHealth(F32), regeneratedHealth(F32)
-- isAlive(BOOL), teamId(INT8), visibilityFlags(UINT32), burningFlags(UINT16)
-- serverSpeedRaw(UINT16), isOnForsage(BOOL), enginePower(UINT8)
+### Vehicle ALL_CLIENTS Properties (sort_size order, 54 total)
+```
+1-byte:  [0]hasAirTargetsInRange [1]isAntiAirMode [2]buoyancyCurrentState [3]buoyancyRudderIndex
+         [4]isOnForsage [5]teamId [6]uiEnabled [7]isAlive [8]speedSignDir [9]enginePower
+         [10]engineDir [11]ignoreMapBorders [12]isBot [13]isFogHornOn [14]blockedControls
+         [15]isInvisible [16]hasActiveMainSquadron [17]isInRageMode [18]oilLeakState
+2-byte:  [19]burningFlags [20]targetLocalPos [21]torpedoLocalPos [22]laserTargetLocalPos
+         [23]waveLocalPos [24]weaponLockFlags [25]serverSpeedRaw [26]respawnTime
+4-byte:  [27]airDefenseDispRadius [28]health [29]regenerationHealth [30]regeneratedHealth
+         [31]maxHealth [32]buoyancyCurrentWaterline [33]regenCrewHpLimit [34]buoyancy
+         [35]visibilityFlags [36]owner [37]selectedWeapon [38]maxServerSpeedRaw
+         [39]draught [40]ruddersAngle [41]deepRuddersAngle
+8-byte:  [42]visibilityTime
+variable:[43-53] airDefenseTargetIds, antiAirAuras, effects, sounds, shipConfig,
+         crewModifiersCompactParams, debugText, miscsPresetsStatus, triggeredSkillsData,
+         deathSettings, state
+```
+
+### Avatar ALL_CLIENTS Properties (sort_size order, 21 total)
+```
+1-byte:  [0]useATBAandAirDefense [1]teamId [2]hasFullPing [3]isFlyMode [4]intuitionActive
+         [5]allyTargetsCapture [6]isAlive [7]isInMinefield
+2-byte:  [8]willBeDeadAtTime [9]playerModeState
+4-byte:  [10]ownShipId [11]selectedWeapon [12]selectedTorpedoGroup
+8-byte:  [13]attrs
+12-byte: [14]vehiclePosition [15]visibilityDistances
+92-byte: [16]weatherParams [17]squadronWeatherParams
+variable:[18]privateBattleLogicState [19]privateVehicleState [20]spottedEntities
+```
+
+### Roster: Vehicle-to-Player Matching (CURRENT BUG)
+**Status: order-based matching is BROKEN — names/ships appear on wrong entities.**
+
+Current approach in `roster.py`:
+1. Self Avatar entity_id from BASE_PLAYER_CREATE
+2. Decode `teamId` and `owner` from Vehicle ENTITY_CREATE inline state data
+3. Self Vehicle identified by `owner == self_avatar_eid` (this works correctly)
+4. Team split by teamId (works correctly)
+5. **BUG:** Within each team, matches JSON header vehicles to sorted entity IDs by order — this is arbitrary and wrong
+
+What we know about available matching data:
+- `receivePlayerData` method on Avatar: pickle tuple `(?, team?, ?, account_id, arena_unique_id, bool, bool)` — has account_ids but only a few, not all 24
+- `onGameRoomStateChanged`: has `(11, account_id)` keys for all 24 players but no vehicle entity_ids
+- `onArenaStateReceived`: nearly empty in modern replays (27 bytes)
+- Vehicle ENTITY_CREATE state has `owner` (Avatar entity_id) but no account_id or shipId
+- Avatar entities have NO ENTITY_CREATE packets (created via BASE_PLAYER_CREATE only for self)
+- Avatar has `ownShipId` property (index 10) but no property updates setting it were observed for non-self Avatars
+- Entity IDs are sequential pairs: Avatar N, Vehicle N+1 (e.g., 1041008→1041009, 1041010→1041011)
+
+**Needs:** A way to map Avatar entity_id → account_id, OR Vehicle entity_id → shipId from entity data. Check landaire/wows-toolkit for their approach (they have a working Rust implementation).
 
 ### Method Index Sizing
 BigWorld uses variable-size method indices depending on total method count:

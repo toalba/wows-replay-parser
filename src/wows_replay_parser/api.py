@@ -154,9 +154,8 @@ def parse_replay(
     events = stream.process(packets)
 
     # Build player roster and inject team_id into tracker
-    # (teamId is set during entity creation, not as a property
-    # update, so the tracker never sees it from packets)
-    players = build_roster(replay.meta, tracker)
+    # teamId is decoded from ENTITY_CREATE inline state data
+    players = build_roster(replay.meta, tracker, packets=packets, registry=registry)
     for player in players:
         if player.entity_id:
             tracker.inject_property(
