@@ -151,6 +151,9 @@ class GameStateTracker:
             entity_type = self._entity_types.get(entity_id, "")
 
             if entity_type == "Vehicle":
+                # Only include ships that have received position data
+                if self.position_at(entity_id, t) is None:
+                    continue
                 ship = self._build_ship_state(entity_id, props, t)
                 ships[entity_id] = ship
 
@@ -218,8 +221,10 @@ class GameStateTracker:
                 etype = self._entity_types.get(entity_id, "")
                 if etype == "Vehicle":
                     cached = pos_cache.get(entity_id)
-                    pos = cached[0] if cached else (0.0, 0.0, 0.0)
-                    yaw = cached[1] if cached else 0.0
+                    if cached is None:
+                        continue  # not yet spotted
+                    pos = cached[0]
+                    yaw = cached[1]
                     ships[entity_id] = ShipState(
                         entity_id=entity_id,
                         health=float(props.get("health", 0)),

@@ -139,6 +139,12 @@ class TestStateAt:
             PacketType.ENTITY_CREATE,
             entity_id=100, entity_type="Vehicle", timestamp=0.0,
         ))
+        # Ship needs a position to be visible in state_at()
+        tracker.process_packet(_make_packet(
+            PacketType.POSITION,
+            entity_id=100, timestamp=0.5,
+            position=(0.0, 0.0, 0.0),
+        ))
         tracker.process_packet(_make_packet(
             PacketType.ENTITY_PROPERTY,
             entity_id=100, entity_type="Vehicle",
