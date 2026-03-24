@@ -20,6 +20,8 @@ from wows_replay_parser.roster import PlayerInfo, build_roster
 from wows_replay_parser.state.tracker import GameStateTracker
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from wows_replay_parser.packets.types import Packet
     from wows_replay_parser.state.models import BattleState, GameState, ShipState
 
@@ -50,6 +52,20 @@ class ParsedReplay:
     def battle_state(self, t: float) -> BattleState:
         """Get battle-level state at timestamp t."""
         return self._tracker.battle_state(t)
+
+    def iter_states(
+        self,
+        timestamps: list[float],
+    ) -> Iterator[GameState]:
+        """Yield GameState for each timestamp, advancing forward.
+
+        Optimized for sequential rendering. O(delta) per frame
+        instead of O(history) per frame.
+
+        Args:
+            timestamps: Monotonically increasing query times.
+        """
+        return self._tracker.iter_states(timestamps)
 
     def events_of_type(self, cls: type[_T]) -> list[_T]:
         """Filter events by type."""

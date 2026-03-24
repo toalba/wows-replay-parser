@@ -3,7 +3,10 @@ from __future__ import annotations
 import copy
 import math
 from bisect import bisect_right
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from wows_replay_parser.packets.types import Packet, PacketType
 
@@ -27,7 +30,7 @@ _SHIP_PROPERTY_MAP: dict[str, str] = {
     "burningFlags": "burning_flags",
 }
 
-_SNAPSHOT_INTERVAL = 30.0  # seconds between cached snapshots
+_SNAPSHOT_INTERVAL = 5.0  # seconds between cached snapshots
 
 
 class GameStateTracker:
@@ -37,6 +40,7 @@ class GameStateTracker:
         self._current: dict[int, dict[str, Any]] = {}
         self._entity_types: dict[int, str] = {}
         self._history: list[PropertyChange] = []
+        self._history_timestamps: list[float] = []  # parallel index for bisect
         self._positions: dict[int, list[tuple[float, tuple[float, float, float], float]]] = {}
         self._snapshots: list[tuple[float, dict[int, dict[str, Any]]]] = []
         self._last_snapshot_time: float = -_SNAPSHOT_INTERVAL
@@ -75,6 +79,7 @@ class GameStateTracker:
                     new_value=packet.property_value,
                 )
                 self._history.append(change)
+                self._history_timestamps.append(change.timestamp)
                 changes.append(change)
 
         # Position update
@@ -108,6 +113,7 @@ class GameStateTracker:
                         new_value=False,
                     )
                     self._history.append(change)
+                    self._history_timestamps.append(change.timestamp)
                     changes.append(change)
 
             elif packet.method_name == "kill" and packet.entity_id:
@@ -124,6 +130,7 @@ class GameStateTracker:
                     new_value=False,
                 )
                 self._history.append(change)
+                self._history_timestamps.append(change.timestamp)
                 changes.append(change)
 
         # Periodic snapshots
@@ -151,6 +158,112 @@ class GameStateTracker:
                 battle = self._build_battle_state(props, state)
 
         return GameState(timestamp=t, ships=ships, battle=battle)
+
+    def iter_states(
+        self, timestamps: list[float],
+    ) -> Iterator[GameState]:
+        """Yield GameState for each timestamp, advancing forward.
+
+        Optimized for sequential access (e.g., frame-by-frame
+        rendering). Maintains running property state AND position
+        pointers — no bisect, no copying, O(delta) per frame.
+
+        Args:
+            timestamps: Monotonically increasing list of query times.
+
+        Yields:
+            GameState snapshot at each requested timestamp.
+        """
+        running: dict[int, dict[str, Any]] = {}
+        history_idx = 0
+        n_history = len(self._history)
+
+        # Per-entity position cursors: entity_id → index into
+        # self._positions[entity_id]
+        pos_cursors: dict[int, int] = {}
+        # Cached last-known position + yaw per entity
+        pos_cache: dict[int, tuple[tuple[float, float, float], float]] = {}
+
+        for t in timestamps:
+            # Apply property changes up to time t
+            while (
+                history_idx < n_history
+                and self._history[history_idx].timestamp <= t
+            ):
+                change = self._history[history_idx]
+                entity_props = running.setdefault(
+                    change.entity_id, {},
+                )
+                entity_props[change.property_name] = (
+                    change.new_value
+                )
+                history_idx += 1
+
+            # Advance position cursors for all tracked entities
+            for eid, positions in self._positions.items():
+                cursor = pos_cursors.get(eid, 0)
+                while (
+                    cursor < len(positions)
+                    and positions[cursor][0] <= t
+                ):
+                    cursor += 1
+                pos_cursors[eid] = cursor
+                if cursor > 0:
+                    entry = positions[cursor - 1]
+                    pos_cache[eid] = (entry[1], entry[2])
+
+            # Build GameState without bisect calls
+            ships: dict[int, ShipState] = {}
+            battle = BattleState()
+            for entity_id, props in running.items():
+                etype = self._entity_types.get(entity_id, "")
+                if etype == "Vehicle":
+                    pos, yaw = pos_cache.get(
+                        entity_id, ((0.0, 0.0, 0.0), 0.0),
+                    )
+                    ships[entity_id] = ShipState(
+                        entity_id=entity_id,
+                        health=float(
+                            props.get("health", 0) or 0,
+                        ),
+                        max_health=float(
+                            props.get("maxHealth", 0) or 0,
+                        ),
+                        regeneration_health=float(
+                            props.get(
+                                "regenerationHealth", 0,
+                            ) or 0,
+                        ),
+                        regenerated_health=float(
+                            props.get(
+                                "regeneratedHealth", 0,
+                            ) or 0,
+                        ),
+                        is_alive=bool(
+                            props.get("isAlive", True),
+                        ),
+                        team_id=int(
+                            props.get("teamId", 0) or 0,
+                        ),
+                        visibility_flags=int(
+                            props.get("visibilityFlags", 0) or 0,
+                        ),
+                        burning_flags=int(
+                            props.get("burningFlags", 0) or 0,
+                        ),
+                        position=pos,
+                        yaw=yaw,
+                        speed=float(
+                            props.get("serverSpeedRaw", 0) or 0,
+                        ),
+                    )
+                elif etype == "BattleLogic":
+                    battle = self._build_battle_state(
+                        props, running,
+                    )
+            yield GameState(
+                timestamp=t, ships=ships, battle=battle,
+            )
 
     def ship_state(self, entity_id: int, t: float) -> ShipState:
         """Get a specific ship's state at time t."""
@@ -219,7 +332,11 @@ class GameStateTracker:
     # --- Private helpers ---
 
     def _rebuild_state_at(self, t: float) -> dict[int, dict[str, Any]]:
-        """Rebuild entity property state at time t from snapshots + history."""
+        """Rebuild entity property state at time t from snapshots + history.
+
+        Uses bisect on the timestamp index to slice only the relevant
+        portion of history, avoiding a full linear scan.
+        """
         # Find nearest snapshot at or before t
         snapshot_state: dict[int, dict[str, Any]] = {}
         snapshot_time = -1.0
@@ -229,15 +346,20 @@ class GameStateTracker:
             idx = bisect_right(snapshot_times, t)
             if idx > 0:
                 snapshot_time, snapshot_data = self._snapshots[idx - 1]
-                snapshot_state = copy.deepcopy(snapshot_data)
+                # Shallow copy: copy outer dicts, not property values
+                snapshot_state = {
+                    eid: dict(props)
+                    for eid, props in snapshot_data.items()
+                }
 
-        # Replay history from snapshot_time to t
-        for change in self._history:
-            if change.timestamp <= snapshot_time:
-                continue
-            if change.timestamp > t:
-                continue
-            entity_props = snapshot_state.setdefault(change.entity_id, {})
+        # Use bisect to find the slice of history between snapshot and t
+        lo = bisect_right(self._history_timestamps, snapshot_time)
+        hi = bisect_right(self._history_timestamps, t)
+
+        for change in self._history[lo:hi]:
+            entity_props = snapshot_state.setdefault(
+                change.entity_id, {},
+            )
             entity_props[change.property_name] = change.new_value
 
         return snapshot_state
