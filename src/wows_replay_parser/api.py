@@ -70,18 +70,34 @@ class ParsedReplay:
 def parse_replay(
     replay_path: str | Path,
     gamedata_path: str | Path,
+    *,
+    auto_update_gamedata: bool = False,
 ) -> ParsedReplay:
     """Parse a .wowsreplay file with full state tracking.
 
     Args:
         replay_path: Path to the .wowsreplay file.
         gamedata_path: Path to wows-gamedata entity_defs dir.
+        auto_update_gamedata: If True, automatically fetch
+            matching gamedata version when replay version
+            doesn't match. Requires git. Defaults to False.
 
     Returns:
         ParsedReplay with events, packets, and state queries.
     """
     replay_path = Path(replay_path)
     gamedata_path = Path(gamedata_path)
+
+    # Auto-sync gamedata if requested
+    if auto_update_gamedata:
+        # Read replay header first to get version
+        pre_reader = ReplayReader()
+        pre_replay = pre_reader.read(replay_path)
+        # gamedata_path is entity_defs/, repo root is 3 levels up
+        gamedata_root = gamedata_path.parent.parent.parent
+        from wows_replay_parser.gamedata_sync import sync_gamedata
+
+        sync_gamedata(gamedata_root, pre_replay.game_version)
 
     # Load gamedata
     aliases = AliasRegistry.from_file(gamedata_path / "alias.xml")
