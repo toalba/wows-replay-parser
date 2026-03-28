@@ -43,15 +43,24 @@ class ShipState:
 
 @dataclass
 class CapturePointState:
-    """Snapshot of a capture point at a point in time."""
+    """Snapshot of a capture point at a point in time.
+
+    Field names match CAPTURE_LOGIC_STATE and CONTROL_POINT_STATE in alias.xml.
+    """
 
     entity_id: int
     radius: float = 0.0
     team_id: int = 0
-    capture_points: int = 0
+    # From CAPTURE_LOGIC_STATE (nested in componentsState.captureLogic)
+    progress: float = 0.0  # 0.0-1.0 capture progress
     capture_speed: float = 0.0
-    owner_id: int = 0
-    control_team_id: int = 0
+    invader_team: int = 0  # team currently capturing
+    has_invaders: bool = False
+    both_inside: bool = False
+    is_enabled: bool = False
+    # From CONTROL_POINT_STATE (nested in componentsState.controlPoint)
+    point_type: int = 0  # cap zone type
+    point_index: int = -1  # A=0, B=1, C=2, ...
 
 
 @dataclass

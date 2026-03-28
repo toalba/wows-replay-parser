@@ -1,25 +1,25 @@
 """
 Builds `construct` schemas dynamically from entity definitions + alias registry.
 
-Given the resolved entity defs and alias registry, this module creates
-binary parsers (construct.Struct) for each entity's properties and methods.
+BigWorld serialization encoding (verified against landaire/wows-toolkit):
 
-The key insight from alias.xml:
-- Simple aliases map to primitives: ENTITY_ID → INT32, PLAYER_ID → INT32
-- FIXED_DICT aliases map to ordered structs with named fields
-- ARRAY aliases map to length-prefixed arrays
-- USER_TYPE aliases (ZIPPED_BLOB, MSGPACK_BLOB, etc.) need special handling
-- TUPLE aliases are fixed-size arrays
+ARRAY count prefix:
+  Always u8 (at ALL nesting levels). No VLH escalation for array counts.
 
-BigWorld serialization order:
-- Properties are serialized in the order they appear in the .def file
-- Method args are serialized in order of <Arg> elements
-- FIXED_DICT fields serialize in order of <Properties> children
-- ARRAY is prefixed with a count (typically uint8 or uint16)
+STRING/BLOB length prefix (inside method calls):
+  u8 length, if 0xFF → u16 length + 1 unknown padding byte.
+
+For property updates (ENTITY_PROPERTY packets):
+  Standard u32 prefix for BLOB/STRING (no VLH — each property is sent
+  with its own u32 payload_length in the packet header).
+
+FIXED_DICT with AllowNone:
+  u8 flag: 0x00 = None, nonzero = data follows.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import construct as cs
@@ -29,8 +29,57 @@ from wows_replay_parser.gamedata.def_loader import MethodDef, PropertyDef
 from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 
 
-# BigWorld primitive type → construct mapping
-PRIMITIVE_MAP: dict[str, cs.Construct[Any, Any]] = {
+# ── Custom constructs for BigWorld wire format ─────────────────────
+
+class _MethodBlobPrefixed(cs.Construct):
+    """Length-prefixed BLOB/STRING for method args.
+
+    Encoding: u8 length, if 0xFF → u16 length + 1 unknown byte.
+    """
+
+    def __init__(self, subcon: cs.Construct[Any, Any]) -> None:
+        super().__init__()
+        self.subcon = subcon
+        self.flagbuildnone = getattr(subcon, "flagbuildnone", False)
+
+    def _parse(self, stream: Any, context: Any, path: str) -> Any:
+        first = cs.stream_read(stream, 1, path)[0]
+        if first < 0xFF:
+            length = first
+        else:
+            length = int.from_bytes(cs.stream_read(stream, 2, path), "little")
+            _unknown = cs.stream_read(stream, 1, path)  # padding byte
+        data = cs.stream_read(stream, length, path)
+        if self.subcon is cs.GreedyBytes:
+            return data
+        return self.subcon.parse(data, **context)
+
+    def _sizeof(self, context: Any, path: str) -> int:
+        raise cs.SizeofError("MethodBlobPrefixed is variable size")
+
+
+class _AllowNone(cs.Construct):
+    """Wraps a construct with a u8 flag: 0=None, nonzero=parse subcon."""
+
+    def __init__(self, subcon: cs.Construct[Any, Any]) -> None:
+        super().__init__()
+        self.subcon = subcon
+        self.flagbuildnone = True
+
+    def _parse(self, stream: Any, context: Any, path: str) -> Any:
+        flag = cs.stream_read(stream, 1, path)[0]
+        if flag == 0:
+            return None
+        return self.subcon._parsereport(stream, context, path)
+
+    def _sizeof(self, context: Any, path: str) -> int:
+        raise cs.SizeofError("AllowNone is variable size")
+
+
+# ── Primitive type maps ────────────────────────────────────────────
+
+# Fixed-size types — same in methods and properties
+FIXED_PRIMITIVES: dict[str, cs.Construct[Any, Any]] = {
     "INT8": cs.Int8sl,
     "INT16": cs.Int16sl,
     "INT32": cs.Int32sl,
@@ -42,130 +91,181 @@ PRIMITIVE_MAP: dict[str, cs.Construct[Any, Any]] = {
     "FLOAT": cs.Float32l,
     "FLOAT32": cs.Float32l,
     "FLOAT64": cs.Float64l,
-    "BOOL": cs.Int8ul,  # BOOL is aliased to UINT8 in alias.xml
-    "STRING": cs.PascalString(cs.Int32ul, "utf-8"),
-    "UNICODE_STRING": cs.PascalString(cs.Int32ul, "utf-8"),
-    "BLOB": cs.Prefixed(cs.Int32ul, cs.GreedyBytes),
-    "PYTHON": cs.Prefixed(cs.Int32ul, cs.GreedyBytes),  # pickled Python object
-    "MAILBOX": cs.Bytes(0),  # Mailbox is server-internal, skip in replays
+    "BOOL": cs.Int8ul,
+    "MAILBOX": cs.Bytes(0),
     "VECTOR2": cs.Struct("x" / cs.Float32l, "y" / cs.Float32l),
     "VECTOR3": cs.Struct("x" / cs.Float32l, "y" / cs.Float32l, "z" / cs.Float32l),
 }
 
+# Variable-length types that need length prefix
+_VARIABLE_TYPES = frozenset({"BLOB", "PYTHON", "STRING", "UNICODE_STRING"})
+
 
 class SchemaBuilder:
-    """
-    Dynamically builds construct schemas from entity definitions.
+    """Dynamically builds construct schemas from entity definitions.
 
-    Usage:
-        builder = SchemaBuilder(alias_registry, entity_registry)
-        schema = builder.build_method_schema("Avatar", 0)
-        schema = builder.build_property_schema("Vehicle", 3)
+    Method schemas use u8/u16 escalating prefix for BLOB/STRING, u8 for
+    ARRAY counts. Property schemas use u32 prefix for BLOB/STRING.
     """
 
     def __init__(self, aliases: AliasRegistry, entities: EntityRegistry) -> None:
         self._aliases = aliases
         self._entities = entities
-        self._cache: dict[str, cs.Construct[Any, Any]] = {}
 
-    def resolve_type(self, type_name: str) -> cs.Construct[Any, Any]:
-        """
-        Resolve a type name to a construct schema.
-
-        Resolution order:
-        1. Check primitive map
-        2. Check alias registry → recurse
-        3. Handle ARRAY, FIXED_DICT, TUPLE inline definitions
-        """
-        # Cache hit
-        if type_name in self._cache:
-            return self._cache[type_name]
-
-        # Primitive
-        if type_name in PRIMITIVE_MAP:
-            return PRIMITIVE_MAP[type_name]
-
-        # Alias
-        alias = self._aliases.resolve(type_name)
-        if alias is not None:
-            schema = self._resolve_alias(alias)
-            self._cache[type_name] = schema
-            return schema
-
-        # Inline compound type: "ARRAY<of>FOO</of>" from FIXED_DICT fields
-        import re
-        m = re.match(r"^ARRAY<of>(.+)</of>$", type_name)
-        if m:
-            elem = self.resolve_type(m.group(1))
-            schema = cs.PrefixedArray(cs.Int8ul, elem)
-            self._cache[type_name] = schema
-            return schema
-
-        # Unknown — treat as opaque blob
-        return cs.Prefixed(cs.Int32ul, cs.GreedyBytes)
-
-    def _resolve_alias(self, alias: TypeAlias) -> cs.Construct[Any, Any]:
-        """Resolve a TypeAlias to a construct schema."""
-        base = alias.base_type.strip()
-
-        # Simple alias to a primitive: e.g. ENTITY_ID → INT32
-        if base in PRIMITIVE_MAP:
-            return PRIMITIVE_MAP[base]
-
-        # FIXED_DICT: ordered struct
-        if base == "FIXED_DICT":
-            fields: list[cs.Construct[Any, Any]] = []
-            for field_name, field_type in alias.fields:
-                fields.append(field_name / self.resolve_type(field_type))
-            return cs.Struct(*fields)
-
-        # ARRAY: length-prefixed
-        if base == "ARRAY" and alias.element_type:
-            elem = self.resolve_type(alias.element_type)
-            return cs.PrefixedArray(cs.Int8ul, elem)
-
-        # TUPLE: fixed-size array
-        if base == "TUPLE" and alias.tuple_types:
-            elems = [self.resolve_type(t) for t in alias.tuple_types]
-            return cs.Struct(*[f"_{i}" / e for i, e in enumerate(elems)])
-
-        # USER_TYPE: most are BLOB-based (ZIPPED_BLOB, MSGPACK_BLOB, etc.)
-        if base == "USER_TYPE":
-            # Check if there's a <Type> hint in the alias
-            if alias.fields:
-                # Some USER_TYPEs specify an underlying type
-                for _, ft in alias.fields:
-                    return self.resolve_type(ft)
-            return cs.Prefixed(cs.Int32ul, cs.GreedyBytes)
-
-        # Recursive alias (alias references another alias)
-        if self._aliases.has(base):
-            return self.resolve_type(base)
-
-        return cs.Prefixed(cs.Int32ul, cs.GreedyBytes)
-
-    def build_method_schema(self, entity_name: str, method_index: int) -> cs.Construct[Any, Any] | None:
+    def build_method_schema(
+        self, entity_name: str, method_index: int,
+    ) -> cs.Construct[Any, Any] | None:
         """Build a schema for a specific client method's arguments."""
         method = self._entities.get_client_method(entity_name, method_index)
         if method is None:
             return None
-        return self._build_method_args_schema(method)
+        return self._build_args_schema(method.args, in_method=True)
 
-    def _build_method_args_schema(self, method: MethodDef) -> cs.Construct[Any, Any]:
-        """Build a struct from a method's argument list."""
-        if not method.args:
-            return cs.Struct()
+    def build_property_schema(
+        self, entity_name: str, prop_index: int,
+    ) -> cs.Construct[Any, Any] | None:
+        """Build a schema for a specific property value.
 
-        fields: list[cs.Construct[Any, Any]] = []
-        for arg_name, arg_type in method.args:
-            label = arg_name if not arg_name.isdigit() else f"arg{arg_name}"
-            fields.append(label / self.resolve_type(arg_type))
-
-        return cs.Struct(*fields)
-
-    def build_property_schema(self, entity_name: str, prop_index: int) -> cs.Construct[Any, Any] | None:
-        """Build a schema for a specific property."""
+        Properties use u32 prefix for BLOB/STRING (standard encoding).
+        """
         prop = self._entities.get_client_property(entity_name, prop_index)
         if prop is None:
             return None
-        return self.resolve_type(prop.type_name)
+        return self._resolve_type(prop.type_name, in_method=False)
+
+    def build_inline_property_schema(
+        self, entity_name: str, prop_index: int,
+    ) -> cs.Construct[Any, Any] | None:
+        """Build a schema for an inline state property value.
+
+        Inline state (EntityCreate) uses vlh encoding for variable-length
+        types (same as method args: u8/u16 escalating prefix, not u32).
+        """
+        prop = self._entities.get_client_property(entity_name, prop_index)
+        if prop is None:
+            return None
+        return self._resolve_type(prop.type_name, in_method=True)
+
+    def _build_args_schema(
+        self, args: list[tuple[str, str]], *, in_method: bool,
+    ) -> cs.Construct[Any, Any]:
+        """Build a struct from a method's argument list."""
+        if not args:
+            return cs.Struct()
+
+        fields: list[cs.Construct[Any, Any]] = []
+        for arg_name, arg_type in args:
+            label = arg_name if not arg_name.isdigit() else f"arg{arg_name}"
+            fields.append(label / self._resolve_type(arg_type, in_method=in_method))
+        return cs.Struct(*fields)
+
+    def _resolve_type(
+        self, type_name: str, *, in_method: bool,
+    ) -> cs.Construct[Any, Any]:
+        """Resolve a type name to a construct schema.
+
+        Args:
+            type_name: The type name from the .def/.xml file.
+            in_method: True = inside a method call (use u8/u16 blob prefix),
+                       False = property update (use u32 blob prefix).
+        """
+        # Fixed primitive
+        if type_name in FIXED_PRIMITIVES:
+            return FIXED_PRIMITIVES[type_name]
+
+        # Variable-length primitive (BLOB, STRING)
+        if type_name in _VARIABLE_TYPES:
+            return self._make_blob_construct(type_name, in_method=in_method)
+
+        # Alias
+        alias = self._aliases.resolve(type_name)
+        if alias is not None:
+            return self._resolve_alias(alias, in_method=in_method)
+
+        # Inline compound: ARRAY<of>FOO</of>
+        m = re.match(r"^ARRAY<of>(.+)</of>$", type_name)
+        if m:
+            elem = self._resolve_type(m.group(1), in_method=in_method)
+            return cs.PrefixedArray(cs.Int8ul, elem)
+
+        # Unknown — treat as opaque blob
+        return self._make_blob_construct("BLOB", in_method=in_method)
+
+    def _resolve_alias(
+        self, alias: TypeAlias, *, in_method: bool,
+    ) -> cs.Construct[Any, Any]:
+        """Resolve a TypeAlias to a construct schema."""
+        base = alias.base_type.strip()
+
+        # Simple alias to a fixed primitive (ENTITY_ID → INT32)
+        if base in FIXED_PRIMITIVES:
+            return FIXED_PRIMITIVES[base]
+
+        # Simple alias to a variable primitive (some alias → BLOB)
+        if base in _VARIABLE_TYPES:
+            return self._make_blob_construct(base, in_method=in_method)
+
+        # FIXED_DICT: ordered struct, optionally AllowNone
+        if base == "FIXED_DICT":
+            fields: list[cs.Construct[Any, Any]] = []
+            for field_name, field_type in alias.fields:
+                fields.append(
+                    field_name / self._resolve_type(field_type, in_method=in_method)
+                )
+            struct = cs.Struct(*fields)
+            if alias.allow_none:
+                return _AllowNone(struct)
+            return struct
+
+        # ARRAY: u8-prefixed count + elements (always u8, never vlh)
+        if base == "ARRAY" and alias.element_type:
+            elem = self._resolve_type(alias.element_type, in_method=in_method)
+            return cs.PrefixedArray(cs.Int8ul, elem)
+
+        # TUPLE: fixed-size array (no count prefix, size is known)
+        if base == "TUPLE" and alias.tuple_types:
+            elems = [self._resolve_type(t, in_method=in_method) for t in alias.tuple_types]
+            return cs.Struct(*[f"_{i}" / e for i, e in enumerate(elems)])
+
+        # USER_TYPE: resolve to underlying type (BLOB, ZIPPED_BLOB, etc.)
+        if base == "USER_TYPE":
+            if alias.fields:
+                for _, ft in alias.fields:
+                    return self._resolve_type(ft, in_method=in_method)
+            return self._make_blob_construct("BLOB", in_method=in_method)
+
+        # Recursive alias (alias references another alias)
+        if self._aliases.has(base):
+            return self._resolve_type(base, in_method=in_method)
+
+        # Final fallback
+        return self._make_blob_construct("BLOB", in_method=in_method)
+
+    def build_schema_for_method_def(
+        self, method: MethodDef,
+    ) -> cs.Construct[Any, Any] | None:
+        """Build a schema for a MethodDef directly (bypasses index lookup).
+
+        Used by the Tier 2 auto-detector for trial parsing candidate methods.
+        """
+        if not method.args:
+            return cs.Struct()
+        return self._build_args_schema(method.args, in_method=True)
+
+    @staticmethod
+    def _make_blob_construct(
+        type_name: str, *, in_method: bool,
+    ) -> cs.Construct[Any, Any]:
+        """Create a length-prefixed construct for BLOB/STRING types.
+
+        In method calls: u8 length, 0xFF → u16 + u8 padding.
+        In property updates: u32 length (standard).
+        """
+        if in_method:
+            if type_name in ("STRING", "UNICODE_STRING"):
+                return _MethodBlobPrefixed(cs.GreedyString("utf-8"))
+            return _MethodBlobPrefixed(cs.GreedyBytes)
+        else:
+            if type_name in ("STRING", "UNICODE_STRING"):
+                return cs.PascalString(cs.Int32ul, "utf-8")
+            return cs.Prefixed(cs.Int32ul, cs.GreedyBytes)

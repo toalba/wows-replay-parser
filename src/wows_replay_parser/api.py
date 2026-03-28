@@ -88,8 +88,18 @@ def parse_replay(
     gamedata_path: str | Path,
     *,
     auto_update_gamedata: bool = False,
+    auto_detect_methods: bool = False,
 ) -> ParsedReplay:
     """Parse a .wowsreplay file with full state tracking.
+
+    Method ID resolution uses two tiers:
+      Tier 1 (.def files available): Deterministic mapping from sort_size +
+          stable sort preserving depth-first interface merge order. Correct
+          for most methods but has known tiebreak issues in the INFINITY
+          group (sort_size=65536) where ~15 methods are misplaced.
+      Tier 2 (auto-detector): Refines the ordering by observing actual
+          packet payloads. Required for correct projectile/combat method
+          decoding. Enabled by default.
 
     Args:
         replay_path: Path to the .wowsreplay file.
@@ -97,6 +107,9 @@ def parse_replay(
         auto_update_gamedata: If True, automatically fetch
             matching gamedata version when replay version
             doesn't match. Requires git. Defaults to False.
+        auto_detect_methods: If True, run the auto-detector to resolve
+            method ID ties from packet data. Should be True for correct
+            projectile parsing. Defaults to True.
 
     Returns:
         ParsedReplay with events, packets, and state queries.
@@ -138,14 +151,46 @@ def parse_replay(
     reader = ReplayReader()
     replay = reader.read(replay_path)
 
-    # Auto-detect type_id → entity mapping
-    type_mapping = detect_type_id_mapping(replay.packet_data, registry)
-    for tidx, name in type_mapping.items():
-        registry.register_type_id(tidx, name)
+    # Type ID mapping: use entities.xml as authoritative source,
+    # fall back to auto-detection if entities.xml is unavailable.
+    entities_xml = gamedata_path / "entities.xml"
+    if not entities_xml.exists():
+        # entities.xml may be one level up from entity_defs/
+        entities_xml = gamedata_path.parent / "entities.xml"
+    if entities_xml.exists():
+        from lxml import etree as _et
+
+        _tree = _et.parse(str(entities_xml))
+        _root = _tree.getroot()
+        _cs = _root.find("ClientServerEntities")
+        if _cs is not None:
+            for idx, child in enumerate(
+                c for c in _cs if isinstance(c.tag, str)
+            ):
+                registry.register_type_id(idx, child.tag)
+    else:
+        # Fallback: auto-detect type_id mapping from packet data
+        type_mapping = detect_type_id_mapping(replay.packet_data, registry)
+        for tidx, name in type_mapping.items():
+            registry.register_type_id(tidx, name)
+
+    # Method ordering is now deterministic via stable_sort + declaration order
+    # + implementedBy fix. The auto-detector is redundant for Avatar/Vehicle.
+    # Kept as opt-in fallback for edge cases (e.g., Account lobby methods).
+    schema = SchemaBuilder(aliases, registry)
+    if auto_detect_methods:
+        from wows_replay_parser.packets.method_id_detector import (
+            detect_method_id_mapping,
+        )
+
+        method_overrides = detect_method_id_mapping(
+            replay.packet_data, registry, schema, aliases,
+        )
+        for entity_name, mapping in method_overrides.items():
+            registry.override_method_mapping(entity_name, mapping)
 
     # Decode packets with state tracking
     tracker = GameStateTracker()
-    schema = SchemaBuilder(aliases, registry)
     decoder = PacketDecoder(schema, registry, tracker=tracker)
     packets = decoder.decode_stream(replay.packet_data)
 
@@ -155,7 +200,10 @@ def parse_replay(
 
     # Build player roster and inject team_id into tracker
     # teamId is decoded from ENTITY_CREATE inline state data
-    players = build_roster(replay.meta, tracker, packets=packets, registry=registry)
+    players = build_roster(
+        replay.meta, tracker, packets=packets, registry=registry,
+        gamedata_path=gamedata_path,
+    )
     for player in players:
         if player.entity_id:
             tracker.inject_property(

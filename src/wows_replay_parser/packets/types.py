@@ -74,6 +74,54 @@ class Packet:
     rotation: tuple[float, float, float] | None = None
     is_on_ground: bool = False
 
+    # EntityCreate inline state (initial property values)
+    initial_properties: dict[str, Any] | None = None
+
+    # EntityControl (0x02)
+    is_controlled: bool = False
+
+    # Version (0x16)
+    version_string: str | None = None
+
+    # OwnShip (0x20) — the Vehicle entity_id owned by the Avatar
+    owned_vehicle_id: int | None = None
+
+    # Map (0x28)
+    space_id: int | None = None
+    arena_id: int | None = None
+    map_name: str | None = None
+    map_data: bytes | None = None  # 128-byte opaque blob
+
+    # Camera (0x25)
+    camera_position: tuple[float, float, float] | None = None
+    camera_rotation: tuple[float, float, float, float] | None = None
+    camera_fov: float | None = None
+
+    # GunMarker (0x18)
+    gun_marker_data: bytes | None = None
+
+    # ServerTimestamp (0x0F)
+    server_time: float | None = None
+
+    # BattleResults (0x22)
+    battle_results_data: bytes | None = None
+
+    # CruiseState (0x32)
+    cruise_state: int | None = None
+    cruise_value: int | None = None
+
+    # CameraMode (0x27)
+    camera_mode: int | None = None
+
+    # SetWeaponLock (0x30)
+    weapon_lock_flags: int | None = None
+    weapon_lock_target: int | None = None
+
+    # ShotTracking (0x33)
+    shot_tracking_entity: int | None = None
+    shot_tracking_weapon: int | None = None
+    shot_tracking_value: int | None = None
+
     # Metadata
     entity_type: str | None = None  # e.g. "Avatar", "Vehicle"
     size: int = 0

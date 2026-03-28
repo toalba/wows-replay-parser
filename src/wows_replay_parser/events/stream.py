@@ -379,13 +379,18 @@ def _minimap_vision_info(pkt: Packet) -> list[MinimapVisionEvent]:
     """
     events: list[MinimapVisionEvent] = []
     args = pkt.method_args or {}
-    entries = _get(args, "arg0", [])
-    if isinstance(entries, dict):
-        entries = [entries]
-    if not isinstance(entries, list):
+    # updateMinimapVisionInfo has two MINIMAPINFO args (ally + enemy vision)
+    all_entries: list = []
+    for arg_key in ("arg0", "arg1"):
+        entries = _get(args, arg_key, [])
+        if isinstance(entries, dict):
+            entries = [entries]
+        if isinstance(entries, list):
+            all_entries.extend(entries)
+    if not all_entries:
         return events
 
-    for entry in entries:
+    for entry in all_entries:
         if not isinstance(entry, dict):
             continue
         vehicle_id = entry.get("vehicleID", 0)
@@ -585,17 +590,21 @@ class EventStream:
             zone_entity_id=packet.entity_id,
             team_id=int(props.get("teamId", 0)),
             radius=float(props.get("radius", 0)),
-            capture_points=(
-                int(cap_logic.get("capturePoints", 0))
-                if isinstance(cap_logic, dict) else 0
+            progress=(
+                float(cap_logic.get("progress", 0))
+                if isinstance(cap_logic, dict) else 0.0
             ),
             capture_speed=(
                 float(cap_logic.get("captureSpeed", 0))
+                if isinstance(cap_logic, dict) else 0.0
+            ),
+            invader_team=(
+                int(cap_logic.get("invaderTeam", 0))
                 if isinstance(cap_logic, dict) else 0
             ),
-            owner_id=(
-                int(cap_logic.get("ownerId", 0))
-                if isinstance(cap_logic, dict) else 0
+            has_invaders=(
+                bool(cap_logic.get("hasInvaders", False))
+                if isinstance(cap_logic, dict) else False
             ),
         )]
 

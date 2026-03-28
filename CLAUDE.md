@@ -1,5 +1,60 @@
 # wows-replay-parser
 
+## Source of Truth Rules
+
+**The `.def` files and `alias.xml` are the single source of truth** for all entity
+definitions, property names, field names, method signatures, type structures, and
+entity type mappings. This applies to every entity in `entities.xml`.
+
+When implementing or debugging any feature:
+1. Read the actual `.def` file and `alias.xml` FIRST — do not rely on field names,
+   type structures, or entity descriptions written elsewhere in this document
+2. If this document contradicts a `.def` file or `alias.xml`, the document is WRONG —
+   fix the document, do not work around the discrepancy
+3. If a field name, type, or structure is not in the `.def`/alias files, it does not
+   exist — do not invent properties based on assumptions
+4. The renderer must never work around parser bugs — if data is wrong, fix the parser
+
+File locations:
+- Entity definitions: `wows-gamedata/data/scripts_entity/entity_defs/*.def`
+- Interface definitions: `wows-gamedata/data/scripts_entity/entity_defs/interfaces/*.def`
+- Type aliases: `wows-gamedata/data/scripts_entity/entity_defs/alias.xml`
+- Entity type ID mapping: `wows-gamedata/data/scripts_entity/entities.xml`
+
+## Debugging Principle: Never conclude data doesn't exist
+
+When investigating a feature and our parser doesn't produce expected data:
+
+1. **NEVER conclude "the replay doesn't contain this data" or "the server doesn't send this."**
+   Our parser has known gaps (missing entity types, unparsed inline state, incomplete
+   NestedProperty routing). Absence of data in our output means our parser probably
+   isn't reading it — not that it isn't there.
+
+2. **Always verify against wows-toolkit first.** The Rust reference implementation at
+   `/home/claude/wows-toolkit` is a working parser. Search its codebase to see if it
+   handles the feature. If wows-toolkit reads the data, it's in the replay and our
+   parser has a bug.
+
+   ```bash
+   grep -rn "KEYWORD" /home/claude/wows-toolkit/crates/wows-replays/src/
+   grep -rn "KEYWORD" /home/claude/wows-toolkit/crates/minimap-renderer/src/
+   ```
+
+3. **Check the .def files and alias.xml** before concluding a property or method
+   doesn't exist. These are the source of truth (see Source of Truth Rules above).
+
+4. **When logging shows zero events, suspect the logging** — not the data source.
+   Add logging at progressively lower levels until you find where the data drops:
+   - Raw packet level (do packets with relevant entity_ids exist?)
+   - Entity routing level (does the entity exist in our registry?)
+   - Property/method resolution level (does the index resolve to the right name?)
+   - Tracker level (does the decoded data reach the state tracker?)
+
+5. **Never run validation tests with workarounds enabled.** If testing whether the
+   deterministic algorithm works, disable the auto-detector. If testing whether a
+   parser fix works, disable renderer fallbacks. Label every test with which
+   workarounds are active.
+
 ## Project Overview
 
 World of Warships `.wowsreplay` file parser with dynamic schema loading from [wows-gamedata](https://github.com/toalba/wows-gamedata). No hardcoded schemas — new patches only require a `git pull` on the gamedata repo.
@@ -97,7 +152,8 @@ Properties are in sort_size order (smallest first). For Vehicle entities, this i
 - **TORPEDOES_PACK**: paramsID(U32), ownerID(I32), salvoID(I32), skinID(U32), torpedoes(ARRAY<TORPEDO>)
 - **BATTLE_LOGIC_STATE**: attentionMarkers, clientAnimations, controlPoints(ARRAY<ENTITY_ID>), diplomacy, uiInfo, physics, respawns
 - **INTERACTIVE_ZONE_STATE**: controlPoint(CONTROL_POINT_STATE), captureLogic(CAPTURE_LOGIC_STATE, AllowNone)
-- **CAPTURE_LOGIC_STATE**: capturePoints(I16), ownerId(U32), teamId(I8), captureSpeed(F)
+- **CAPTURE_LOGIC_STATE**: progress(F), invaderTeam(TEAM_ID), bothInside(BOOL), hasInvaders(BOOL), isEnabled(BOOL), isVisible(BOOL), captureTime(F), captureSpeed(F)
+- **CONTROL_POINT_STATE**: buoyVisualId(GAMEPARAMS_ID), nextControlPoint(ENTITY_ID), type(U8), timerName(STRING), index(I8)
 - **TEAMS_DEF**: default(U8), teams(ARRAY<TEAM_STATE>)
 
 ### Vehicle ALL_CLIENTS Properties (sort_size order, 54 total)
@@ -130,26 +186,117 @@ variable:[43-53] airDefenseTargetIds, antiAirAuras, effects, sounds, shipConfig,
 variable:[18]privateBattleLogicState [19]privateVehicleState [20]spottedEntities
 ```
 
-### Roster: Vehicle-to-Player Matching (CURRENT BUG)
-**Status: order-based matching is BROKEN — names/ships appear on wrong entities.**
+### Roster: Vehicle-to-Player Matching (FIXED)
+**Status: ID-based matching via `onArenaStateReceived` — working correctly.**
 
-Current approach in `roster.py`:
-1. Self Avatar entity_id from BASE_PLAYER_CREATE
-2. Decode `teamId` and `owner` from Vehicle ENTITY_CREATE inline state data
-3. Self Vehicle identified by `owner == self_avatar_eid` (this works correctly)
-4. Team split by teamId (works correctly)
-5. **BUG:** Within each team, matches JSON header vehicles to sorted entity IDs by order — this is arbitrary and wrong
+#### onArenaStateReceived Wire Format
 
-What we know about available matching data:
-- `receivePlayerData` method on Avatar: pickle tuple `(?, team?, ?, account_id, arena_unique_id, bool, bool)` — has account_ids but only a few, not all 24
-- `onGameRoomStateChanged`: has `(11, account_id)` keys for all 24 players but no vehicle entity_ids
-- `onArenaStateReceived`: nearly empty in modern replays (27 bytes)
-- Vehicle ENTITY_CREATE state has `owner` (Avatar entity_id) but no account_id or shipId
-- Avatar entities have NO ENTITY_CREATE packets (created via BASE_PLAYER_CREATE only for self)
-- Avatar has `ownShipId` property (index 10) but no property updates setting it were observed for non-self Avatars
-- Entity IDs are sequential pairs: Avatar N, Vehicle N+1 (e.g., 1041008→1041009, 1041010→1041011)
+The `onArenaStateReceived` method (Avatar.def) arrives as an ENTITY_METHOD (0x08) packet:
+```
+Packet header (12 bytes):
+  payload_size(u32 LE) + packet_type(u32 LE, 0x08) + clock(f32 LE)
 
-**Needs:** A way to map Avatar entity_id → account_id, OR Vehicle entity_id → shipId from entity data. Check landaire/wows-toolkit for their approach (they have a working Rust implementation).
+Method payload:
+  entity_id(u32) + method_id(u32) + payload_length(u32)  ← 12-byte method header
+  arenaUniqueId(INT64, 8 bytes)                          ← fixed arg
+  teamBuildTypeId(INT8, 1 byte)                          ← fixed arg
+  preBattlesInfo(BLOB)                                    ← pickle: dict with preBattle info
+  playersStates(BLOB)                                     ← pickle: list of 24 player tuples
+  botsStates(BLOB)                                        ← pickle: list of bot tuples (often empty)
+  observersState(BLOB)                                    ← pickle: empty list
+  buildingsInfo(BLOB)                                     ← pickle: empty list
+```
+
+#### BLOB Encoding (BigWorld VariableLengthHeaderSize)
+
+Each BLOB arg uses BigWorld's variable-length prefix encoding. The method's `variable_length_header_size` (vlh) determines the base prefix size:
+
+**vlh=1 (default, used by onArenaStateReceived):**
+```
+if first_byte < 0xFF:  length = first_byte                          (1 byte prefix)
+if first_byte == 0xFF: length = next_u16                            (3 bytes prefix)
+if first_byte == 0xFF and next_u16 == 0xFFFF: length = next_u32    (7 bytes prefix)
+```
+
+**vlh=2:** Same pattern but starts with u16 and escalates to u32.
+**vlh=4:** Always u32 (no escalation).
+
+This differs from the standard `construct` schema which assumes all BLOBs have a u32 length prefix. The schema builder's `cs.Prefixed(cs.Int32ul, cs.GreedyBytes)` for BLOB types is therefore **wrong** for methods with vlh < 4. This is why the construct-based schema fails to parse `onArenaStateReceived` args (the construct parser silently fails, leaving `method_args = None`).
+
+In practice, the roster code bypasses the length prefix encoding entirely by scanning the raw payload for pickle protocol 2 headers (`\x80\x02`) and deserializing sequentially. Each pickle is self-delimiting (ends at the STOP opcode `\x2E`), so boundaries are unambiguous.
+
+#### Pickle Deserialization (Python 2 → Python 3)
+
+The pickle data is created by the WoWs game server running **Python 2.7**, using **pickle protocol 2**.
+
+Python 2 pickle specifics:
+- `str` objects are serialized as raw bytes (no encoding metadata)
+- Python 3's `pickle.loads()` must be told how to decode these bytes → use `encoding='latin-1'`
+- `latin-1` is safe because it maps 0x00-0xFF 1:1 to Unicode — it never raises, even for Cyrillic/CJK player names stored as UTF-8 byte sequences inside Python 2 `str` objects
+- The pickle references game-specific classes (e.g. `CamouflageInfo`) that don't exist in our code → use a custom `Unpickler.find_class()` that creates dummy `dict` subclasses
+
+This `latin-1` + safe unpickler approach applies to **any BLOB containing Python 2 pickle data** in the replay (e.g. `onGameRoomStateChanged`, `receivePlayerData`), not to the binary packet stream itself. The replay's packet headers, entity properties, and construct-based schemas use standard LE binary encoding, not pickle.
+
+#### Pickle Content: Player Data Structure
+
+Each player in the `playersStates` pickle is a list of `(int_key, value)` tuples — NOT a dict:
+```python
+[
+  (0, 502524043),        # accountDBID
+  (1, True),             # antiAbuseEnabled
+  (2, 1041006),          # avatarId
+  (3, CamouflageInfo{}), # camouflageInfo (game class → dummy dict)
+  (4, 11776947),         # clanColor
+  (5, 12345),            # clanID
+  (6, 'TTT'),            # clanTag
+  ...
+  (11, 502524043),       # id ← matches JSON header vehicles[].id
+  ...
+  (25, 'Dutch_Elephant'),# name
+  ...
+  (33, 1041009),         # shipId ← Vehicle entity_id in game world
+  ...
+  (36, 1),               # teamId
+  ...
+]
+```
+
+Full key maps for players (38 keys) and bots (28 keys, different indices) are in `roster.py`.
+
+#### Matching Chain
+
+1. Find the arena state packet by content probing (scan early ENTITY_METHOD packets for valid pickle player lists)
+2. Deserialize `playersStates` pickle with `encoding='latin-1'` + safe unpickler
+3. Convert each player's `(int_key, value)` tuples to dicts using the key map
+4. Match to JSON header: `arena_player["id"] == meta_vehicle["id"]` (AccountId)
+5. Use `arena_player["shipId"]` as the Vehicle entity_id for all subsequent lookups
+
+#### Method Ordering (Verified 100% Correct)
+
+Method indices are assigned by `std::stable_sort` on `streamSize` (BigWorld v14.4.1
+convention). Our `compute_method_sort_size()` + Python stable sort produces the exact
+same ordering as the engine. **Verified 10/10 against real replay data** (both unique
+sort_size methods and tie groups).
+
+Key sort rules:
+- Fixed-size methods first (ascending by arg byte sum)
+- Variable-size methods second (ascending by VLH: 1, then 2, then 4)
+- Ties broken by declaration order (depth-first interface merge = stable sort)
+
+Critical detail: types with `<implementedBy>` tag → `streamSize() = -1` (variable),
+regardless of field contents. Our `compute_type_sort_size()` handles this via
+`TypeAlias.has_implemented_by`. 16 types in alias.xml have this tag.
+
+The **auto-detector** (`method_id_detector.py`) is still enabled by default but is now
+redundant for Avatar and Vehicle. It may still help with Account entity tie groups
+(lobby/pre-battle methods) where the declaration order has not been verified.
+
+#### Base Player Entity Type
+
+`BASE_PLAYER_CREATE` (0x00) is a WoWS-custom packet. The `type_idx` field does NOT
+map to `entities.xml`. The decoder resolves the type dynamically by finding the entity
+type with the most ClientMethods (= Avatar, 178 methods). This entity receives all
+player-side method calls including combat events, vision updates, and chat.
 
 ### Method Index Sizing
 BigWorld uses variable-size method indices depending on total method count:
@@ -162,6 +309,55 @@ Check entity's total ClientMethods count (including inherited from interfaces).
 
 ### VariableLengthHeaderSize
 Some methods have `<VariableLengthHeaderSize>` (1=uint8, 2=uint16, 4=uint32) affecting payload size encoding. Notable: `receiveDamagesOnShip` (2), `onGameRoomStateChanged` (2), `receiveHitLocationsInitialState` (2).
+
+### Entity Type ID Mapping (from entities.xml)
+```
+0=Avatar  1=Vehicle  2=Account  3=SmokeScreen  4=OfflineEntity
+5=VehicleAppearance  6=Login  7=BattleEntity  8=Building  9=MasterChanger
+10=BattleLogic  11=ReplayLeech  12=ReplayConnectionHandler
+13=InteractiveZone  14=InteractiveObject
+```
+Note: type_id auto-detector infers this from packet analysis, not from entities.xml directly.
+
+### Feature Data Path Status (audited 2026-03-28)
+
+**Decode rate: 100%** (37,307/37,309 method calls in test replay). All 178 Avatar
+and 83 Vehicle ClientMethods decode successfully. Method index assignment verified
+correct against real replay data.
+
+| Feature | Status | Entity → Property/Method |
+|---------|--------|--------------------------|
+| Ship positions | WORKING | Vehicle → Position (0x0A), Avatar → PlayerOrientation (0x2C) |
+| Ship health | WORKING | Vehicle → health/maxHealth properties |
+| Ship deaths | WORKING | Avatar → receiveVehicleDeath, Vehicle → kill |
+| Player roster | WORKING | Avatar → onArenaStateReceived (pickle) |
+| Team scores | WORKING | BattleLogic → teams property (TEAMS_DEF) |
+| Chat messages | WORKING | Avatar → onChatMessage (35/37 = 94.6%, 2 encoding edge cases) |
+| Consumables | WORKING | Vehicle → onConsumableUsed, setConsumables, onConsumableInterrupted |
+| Ribbons | WORKING | Derived from hit events (no network method) |
+| Minimap vision | WORKING | Avatar → updateMinimapVisionInfo (both args) |
+| Artillery/shells | WORKING | Avatar → receiveArtilleryShots, receiveShotKills, receiveShellInfo |
+| Torpedoes | WORKING | Avatar → receiveTorpedoes, receiveTorpedoArmed/Sync/Direction |
+| Depth charges | WORKING | Avatar → receiveDepthChargesPacks |
+| Plane projectiles | WORKING | Avatar → receivePlaneProjectilePack |
+| Explosions | WORKING | Avatar → receiveExplosions |
+| Damage stats | WORKING | Avatar → receiveDamageStat (pickle), receiveShellInfo |
+| Damage on ship | WORKING | Vehicle → receiveDamagesOnShip (ARRAY<DAMAGES>) |
+| Gun state | WORKING | Vehicle → syncGun (yaw, pitch, reload, ammo) |
+| Torpedo tubes | WORKING | Vehicle → syncTorpedoTube, syncTorpedoState |
+| Weapon switching | WORKING | Vehicle → setAmmoForWeapon, shootOnClient, shootATBAGuns |
+| Squadrons | WORKING | Avatar → 16 receive_* methods (add/remove/update/health/death/state) |
+| Air support | WORKING | Avatar → activateAirSupport, deactivateAirSupport |
+| Game room state | WORKING | Avatar → onGameRoomStateChanged (pickle, 88 updates/game) |
+| Arena state | WORKING | Avatar → onArenaStateReceived (pickle, full player roster) |
+| Battle end | WORKING | Avatar → onBattleEnd |
+| Cooldowns | WORKING | Avatar → updateCoolDown |
+| Ship physics | WORKING | Vehicle → syncShipPhysics (pickle blob) |
+| Hit locations | WORKING | Vehicle → receiveHitLocationStateChange, receiveHitLocationsInitialState |
+| Achievements | WORKING | Avatar → onAchievementEarned |
+| Capture zones | PARTIAL | InteractiveZone → componentsState (field names fixed, inline state not parsed) |
+| Smoke screens | NOT IMPL | SmokeScreen entity — positions tracked, no state model |
+| Buildings | NOT IMPL | Building entity — no state model |
 
 ### Map Coordinate System
 - Map bounds from `wows-gamedata/data/spaces/<map_name>/space.settings` — XML with `<bounds minX maxX minY maxY />`

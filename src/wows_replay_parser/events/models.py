@@ -161,14 +161,15 @@ class TorpedoCreatedEvent(GameEvent):
 
 @dataclass
 class CapturePointUpdateEvent(GameEvent):
-    """InteractiveZone property change."""
+    """InteractiveZone property change. Fields match alias.xml CAPTURE_LOGIC_STATE."""
 
     zone_entity_id: int = 0
     team_id: int = 0
     radius: float = 0.0
-    capture_points: int = 0
-    capture_speed: float = 0.0
-    owner_id: int = 0
+    progress: float = 0.0  # CAPTURE_LOGIC_STATE.progress
+    capture_speed: float = 0.0  # CAPTURE_LOGIC_STATE.captureSpeed
+    invader_team: int = 0  # CAPTURE_LOGIC_STATE.invaderTeam
+    has_invaders: bool = False  # CAPTURE_LOGIC_STATE.hasInvaders
 
 
 @dataclass

@@ -33,6 +33,9 @@ class TypeAlias:
     size: int | None = None
     # FIXED_DICT with AllowNone
     allow_none: bool = False
+    # Has <implementedBy> tag (custom Python serializer)
+    # Engine treats these as variable-length regardless of field types
+    has_implemented_by: bool = False
 
 
 class AliasRegistry:
@@ -97,11 +100,13 @@ class AliasRegistry:
             allow_none_el = element.find("AllowNone")
             if allow_none_el is not None:
                 allow_none = (allow_none_el.text or "").strip().lower() == "true"
+            has_impl = element.find("implementedBy") is not None
             return TypeAlias(
                 name=name,
                 base_type="FIXED_DICT",
                 fields=fields,
                 allow_none=allow_none,
+                has_implemented_by=has_impl,
             )
 
         # --- ARRAY ---
@@ -138,12 +143,20 @@ class AliasRegistry:
         if text == "USER_TYPE":
             type_el = element.find("Type")
             underlying = (type_el.text or "BLOB").strip() if type_el is not None else "BLOB"
-            return TypeAlias(name=name, base_type=underlying)
+            has_impl = element.find("implementedBy") is not None
+            return TypeAlias(
+                name=name, base_type=underlying,
+                has_implemented_by=has_impl,
+            )
 
         # --- Simple alias ---
         # Text content is the base type, e.g. "INT32", "FLOAT", "STRING"
         if text:
-            return TypeAlias(name=name, base_type=text)
+            has_impl = element.find("implementedBy") is not None
+            return TypeAlias(
+                name=name, base_type=text,
+                has_implemented_by=has_impl,
+            )
 
         return TypeAlias(name=name, base_type="UNKNOWN")
 

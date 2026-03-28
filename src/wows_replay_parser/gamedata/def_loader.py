@@ -22,6 +22,8 @@ from pathlib import Path
 
 from lxml import etree
 
+from wows_replay_parser.gamedata.alias_registry import AliasRegistry
+
 
 @dataclass
 class PropertyDef:
@@ -84,7 +86,14 @@ class DefLoader:
         return entities
 
     def load(self, entity_name: str) -> EntityDef:
-        """Load a single entity .def file, resolving interfaces."""
+        """Load a single entity .def file, resolving interfaces.
+
+        Uses the BigWorld depth-first interface merge algorithm:
+        1. For each interface (in XML document order), recursively
+           resolve its sub-interfaces, then append its methods.
+        2. Then append the entity's own methods.
+        3. Deduplicate by name — first definition wins.
+        """
         path = self._dir / f"{entity_name}.def"
         if not path.exists():
             raise FileNotFoundError(f"Entity def not found: {path}")
@@ -93,7 +102,7 @@ class DefLoader:
         root = tree.getroot()
         entity = EntityDef(name=entity_name)
 
-        # Parse <Implements>
+        # Parse <Implements> list (for reference only)
         implements_el = root.find("Implements")
         if implements_el is not None:
             for iface in implements_el:
@@ -101,60 +110,104 @@ class DefLoader:
                     continue
                 entity.implements.append(iface.text.strip() if iface.text else iface.tag)
 
-        # Parse <Properties>
-        self._parse_properties(root, entity)
-
-        # Parse method sections
-        for section in ("ClientMethods", "CellMethods", "BaseMethods"):
-            self._parse_methods(root, entity, section)
-
-        # Merge interfaces in reverse order — each _merge_interface prepends,
-        # so reversing ensures the final order is: iface[0] + iface[1] + ... + entity
-        for iface_name in reversed(entity.implements):
-            self._merge_interface(entity, iface_name)
+        # Depth-first merge: interfaces first, entity's own methods last.
+        # _parse_section handles the recursion.
+        seen_methods: set[str] = set()
+        seen_props: set[str] = set()
+        self._parse_section(root, entity, seen_methods, seen_props)
 
         return entity
 
-    def _parse_properties(
-        self, root: etree._Element, entity: EntityDef, *, prepend: bool = False,
+    # Legacy methods removed — replaced by _parse_properties_dedup
+    # and _parse_methods_dedup with correct depth-first merge order.
+
+    def _parse_section(
+        self,
+        root: etree._Element,
+        entity: EntityDef,
+        seen_methods: set[str],
+        seen_props: set[str],
+        *,
+        _visited: set[str] | None = None,
     ) -> None:
-        """Parse <Properties> section."""
+        """Depth-first BigWorld merge: interfaces first, own methods last.
+
+        For each <Implements> interface (in XML document order):
+            recursively parse_section(interface)
+        Then parse this node's own ClientMethods/Properties.
+
+        Methods are deduplicated by name — first definition wins.
+        """
+        if _visited is None:
+            _visited = set()
+
+        # 1. Recurse into interfaces (depth-first, XML document order)
+        impl_el = root.find("Implements")
+        if impl_el is not None:
+            for child in impl_el:
+                if not isinstance(child.tag, str):
+                    continue
+                iface_name = child.text.strip() if child.text else child.tag
+                if iface_name in _visited:
+                    continue
+                _visited.add(iface_name)
+
+                iface_path = self._interfaces_dir / f"{iface_name}.def"
+                if not iface_path.exists():
+                    continue
+
+                tree = etree.parse(str(iface_path))
+                iface_root = tree.getroot()
+                self._parse_section(
+                    iface_root, entity, seen_methods, seen_props,
+                    _visited=_visited,
+                )
+
+        # 2. Append this node's own properties (deduplicating by name)
+        self._parse_properties_dedup(root, entity, seen_props)
+
+        # 3. Append this node's own methods (deduplicating by name)
+        for section in ("ClientMethods", "CellMethods", "BaseMethods"):
+            self._parse_methods_dedup(root, entity, section, seen_methods)
+
+    def _parse_properties_dedup(
+        self, root: etree._Element, entity: EntityDef, seen: set[str],
+    ) -> None:
+        """Parse <Properties>, skipping names already seen."""
         props_el = root.find("Properties")
         if props_el is None:
             return
 
-        new_props: list[PropertyDef] = []
         for prop_el in props_el:
             if not isinstance(prop_el.tag, str):
-                continue  # skip XML comments
+                continue
             prop_name = prop_el.tag
+            if prop_name in seen:
+                continue
+            seen.add(prop_name)
+
             type_el = prop_el.find("Type")
             flags_el = prop_el.find("Flags")
             allow_none_el = prop_el.find("AllowNone")
 
-            type_name = type_el.text.strip() if type_el is not None and type_el.text else "UNKNOWN"
+            type_name = AliasRegistry._extract_type_text(type_el) if type_el is not None else "UNKNOWN"
             flags = flags_el.text.strip() if flags_el is not None and flags_el.text else ""
             allow_none = False
             if allow_none_el is not None and allow_none_el.text:
                 allow_none = allow_none_el.text.strip().lower() == "true"
 
-            new_props.append(PropertyDef(
+            entity.properties.append(PropertyDef(
                 name=prop_name,
                 type_name=type_name,
                 flags=flags,
                 allow_none=allow_none,
             ))
 
-        if prepend:
-            entity.properties[:] = new_props + entity.properties
-        else:
-            entity.properties.extend(new_props)
-
-    def _parse_methods(
-        self, root: etree._Element, entity: EntityDef, section: str,
-        *, prepend: bool = False,
+    def _parse_methods_dedup(
+        self, root: etree._Element, entity: EntityDef,
+        section: str, seen: set[str],
     ) -> None:
-        """Parse a methods section (ClientMethods, CellMethods, BaseMethods)."""
+        """Parse a methods section, skipping names already seen."""
         section_el = root.find(section)
         if section_el is None:
             return
@@ -165,14 +218,15 @@ class DefLoader:
             "BaseMethods": entity.base_methods,
         }[section]
 
-        new_methods: list[MethodDef] = []
-
         for method_el in section_el:
             if not isinstance(method_el.tag, str):
-                continue  # skip XML comments and processing instructions
+                continue
+            if method_el.tag in seen:
+                continue
+            seen.add(method_el.tag)
+
             method = MethodDef(name=method_el.tag, section=section)
 
-            # Parse VariableLengthHeaderSize
             vlh_el = method_el.find("VariableLengthHeaderSize")
             if vlh_el is not None and vlh_el.text:
                 try:
@@ -180,59 +234,15 @@ class DefLoader:
                 except ValueError:
                     pass
 
-            # Parse args
             arg_counter = 0
             for child in method_el:
                 if child.tag == "Arg":
-                    arg_type = child.text.strip() if child.text else "UNKNOWN"
+                    arg_type = AliasRegistry._extract_type_text(child)
                     method.args.append((str(arg_counter), arg_type))
                     arg_counter += 1
                 elif child.tag == "Args":
                     for named_arg in child:
-                        arg_type = named_arg.text.strip() if named_arg.text else "UNKNOWN"
+                        arg_type = AliasRegistry._extract_type_text(named_arg)
                         method.args.append((named_arg.tag, arg_type))
 
-            new_methods.append(method)
-
-        if prepend:
-            # Interface methods go before entity's own methods
-            target[:] = new_methods + target
-        else:
-            target.extend(new_methods)
-
-    def _merge_interface(
-        self, entity: EntityDef, iface_name: str, *, _visited: set[str] | None = None,
-    ) -> None:
-        """Load an interface .def and merge its properties/methods into the entity.
-
-        Interface methods are prepended so they come before the entity's own
-        methods in the pre-sort list. Handles one level of nested interfaces.
-        """
-        if _visited is None:
-            _visited = set()
-        if iface_name in _visited:
-            return
-        _visited.add(iface_name)
-
-        iface_path = self._interfaces_dir / f"{iface_name}.def"
-        if not iface_path.exists():
-            return
-
-        tree = etree.parse(str(iface_path))
-        root = tree.getroot()
-
-        # Recursively merge sub-interfaces first
-        impl_el = root.find("Implements")
-        if impl_el is not None:
-            for child in impl_el:
-                if not isinstance(child.tag, str):
-                    continue
-                sub_name = child.text.strip() if child.text else child.tag
-                self._merge_interface(entity, sub_name, _visited=_visited)
-
-        # Merge properties (prepend — interface props before entity's own)
-        self._parse_properties(root, entity, prepend=True)
-
-        # Merge methods (prepend — interface methods before entity's own)
-        for section in ("ClientMethods", "CellMethods", "BaseMethods"):
-            self._parse_methods(root, entity, section, prepend=True)
+            target.append(method)

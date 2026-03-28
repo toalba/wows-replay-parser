@@ -46,6 +46,12 @@ def compute_type_sort_size(type_name: str, aliases: AliasRegistry) -> int:
     if alias is None:
         return INFINITY  # Unknown types treated as variable-length
 
+    # BigWorld: implementedBy means a custom Python serializer controls the
+    # wire format → FixedDictDataType::streamSize() returns -1 (variable).
+    # This applies to FIXED_DICT, USER_TYPE, and simple aliases alike.
+    if alias.has_implemented_by:
+        return INFINITY
+
     base = alias.base_type.strip()
 
     # Simple alias → recurse to the base type
@@ -202,6 +208,18 @@ class EntityRegistry:
         if entity is None or prop_index >= len(entity.client_properties):
             return None
         return entity.client_properties[prop_index]
+
+    def override_method_mapping(
+        self, entity_name: str, mapping: dict[int, MethodDef],
+    ) -> None:
+        """Replace specific method index entries for an entity.
+
+        Used by the Tier 2 auto-detector fallback when .def files are
+        unavailable and tie-group ordering must be resolved from packet data.
+        """
+        entity = self._entities.get(entity_name)
+        if entity is not None:
+            entity.client_methods_by_index.update(mapping)
 
     @property
     def entity_names(self) -> list[str]:

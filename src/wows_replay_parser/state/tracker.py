@@ -49,6 +49,25 @@ class GameStateTracker:
         self._minimap_positions: dict[int, list[tuple[float, float, float, float, bool, bool]]] = {}
         # Death position cache (Trap 13): entity_id → (position, yaw)
         self._death_positions: dict[int, tuple[tuple[float, float, float], float]] = {}
+        # OwnShip: the Vehicle entity_id owned by the replay's player
+        self._own_vehicle_id: int | None = None
+        # Entities that have left Area of Interest (timestamp tracked)
+        self._entity_leave_times: dict[int, float] = {}
+        # Consumable activations per entity:
+        # entity_id → list of (timestamp, consumable_type_id, duration)
+        self._consumable_activations: dict[int, list[tuple[float, int, float]]] = {}
+        # Consumable ID → slot index mapping per entity (from setConsumables pickle)
+        self._consumable_id_to_slot: dict[int, dict[int, int]] = {}
+        # Camera state per tick
+        self._camera_positions: list[tuple[float, tuple[float, float, float]]] = []
+        # Server timestamp (absolute time from ServerTimestamp packet)
+        self._server_time: float | None = None
+        # Version string from Version packet
+        self._version_string: str | None = None
+        # Map info from Map packet
+        self._map_space_id: int | None = None
+        self._map_arena_id: int | None = None
+        self._map_name: str | None = None
 
     def process_packet(self, packet: Packet) -> list[PropertyChange]:
         """Process a decoded packet, updating internal state.
@@ -79,6 +98,27 @@ class GameStateTracker:
                 entry = (packet.timestamp, packet.position, 0.0)
                 self._positions.setdefault(packet.entity_id, []).insert(0, entry)
 
+            # Store initial properties from ENTITY_CREATE inline state
+            if (
+                ptype == PacketType.ENTITY_CREATE
+                and packet.initial_properties
+            ):
+                entity_props = self._current.setdefault(packet.entity_id, {})
+                entity_type = packet.entity_type or ""
+                for prop_name, prop_value in packet.initial_properties.items():
+                    entity_props[prop_name] = prop_value
+                    change = PropertyChange(
+                        timestamp=packet.timestamp,
+                        entity_id=packet.entity_id,
+                        entity_type=entity_type,
+                        property_name=prop_name,
+                        old_value=None,
+                        new_value=prop_value,
+                    )
+                    self._history.append(change)
+                    self._history_timestamps.append(change.timestamp)
+                    changes.append(change)
+
         # Property update
         elif ptype == PacketType.ENTITY_PROPERTY:
             if packet.property_name:
@@ -98,27 +138,90 @@ class GameStateTracker:
                 self._history_timestamps.append(change.timestamp)
                 changes.append(change)
 
+        # NestedProperty update (0x23) — sub-field change within a property.
+        # The decoder applies the update to _current directly; we record
+        # a snapshot of the property in history so iter_states sees
+        # the value at each point in time (not the final mutated ref).
+        # We use _snapshot_value() to avoid deepcopy on BytesIO objects
+        # inside construct Containers.
+        elif ptype == PacketType.NESTED_PROPERTY:
+            if packet.property_name and packet.property_value is not None:
+                entity_type = packet.entity_type or self._entity_types.get(packet.entity_id, "")
+                change = PropertyChange(
+                    timestamp=packet.timestamp,
+                    entity_id=packet.entity_id,
+                    entity_type=entity_type,
+                    property_name=packet.property_name,
+                    old_value=None,
+                    new_value=self._snapshot_value(packet.property_value),
+                )
+                self._history.append(change)
+                self._history_timestamps.append(change.timestamp)
+                changes.append(change)
+
+        # EntityLeave (0x04) — entity leaves AoI
+        elif ptype == PacketType.ENTITY_LEAVE:
+            if packet.entity_id:
+                self._entity_leave_times[packet.entity_id] = packet.timestamp
+
+        # OwnShip (0x20) — links Avatar to its Vehicle
+        elif ptype == PacketType.OWN_SHIP:
+            if packet.owned_vehicle_id is not None:
+                self._own_vehicle_id = packet.owned_vehicle_id
+
+        # Version (0x16)
+        elif ptype == PacketType.VERSION:
+            if packet.version_string:
+                self._version_string = packet.version_string
+
+        # Map (0x28)
+        elif ptype == PacketType.MAP:
+            if packet.space_id is not None:
+                self._map_space_id = packet.space_id
+                self._map_arena_id = packet.arena_id
+            if packet.map_name is not None:
+                self._map_name = packet.map_name
+
+        # ServerTimestamp (0x0F)
+        elif ptype == PacketType.SERVER_TIMESTAMP:
+            if packet.server_time is not None:
+                self._server_time = packet.server_time
+
+        # Camera (0x25) — store camera position for potential replay rendering
+        elif ptype == PacketType.CAMERA:
+            if packet.camera_position is not None:
+                self._camera_positions.append(
+                    (packet.timestamp, packet.camera_position),
+                )
+
         # Position update (0x0A), NonVolatilePosition (0x2A — Trap 10),
         # and PlayerOrientation (0x2C — self player's ship position)
         elif ptype in (PacketType.POSITION, PacketType.NON_VOLATILE_POSITION,
                        PacketType.PLAYER_ORIENTATION):
             if packet.position and packet.entity_id:
                 yaw = 0.0
-                if ptype == PacketType.PLAYER_ORIENTATION:
-                    # PlayerOrientation rotation = (yaw, pitch, roll)
-                    rotation = getattr(packet, "rotation", None)
-                    if rotation is not None:
-                        yaw = rotation[0]
-                else:
-                    direction: tuple[float, float, float] | None = getattr(packet, "direction", None)
-                    if direction is not None:
-                        dx, _dy, dz = direction
-                        yaw = math.atan2(dx, dz)
+                # All position packet types store ship heading in
+                # rotation[0] (yaw, pitch, roll). The 'direction' field
+                # in Position (0x0A) is NOT a velocity vector for other
+                # players — it contains garbage (denormalized floats).
+                rotation = getattr(packet, "rotation", None)
+                if rotation is not None:
+                    yaw = rotation[0]
                 entry = (packet.timestamp, packet.position, yaw)
                 self._positions.setdefault(packet.entity_id, []).append(entry)
 
-        # Method call — watch for deaths and minimap vision
+        # Method call — watch for deaths, minimap vision, consumables
         elif ptype == PacketType.ENTITY_METHOD:
+            # Consumable slot mapping from setConsumables (pickle with consumablesDict)
+            if packet.method_name == "setConsumables" and packet.method_args:
+                self._track_consumable_slots(packet)
+
+            # Consumable activation tracking via onConsumableUsed.
+            # Args: consumableUsageParams(BLOB) + workTimeLeft(FLOAT32)
+            # The BLOB contains: usage_type(u8) + consumable_id(u8)
+            if packet.method_name == "onConsumableUsed" and packet.method_args:
+                self._track_consumable_used(packet)
+
             # Minimap vision info (Trap 5/6)
             if packet.method_name == "updateMinimapVisionInfo" and packet.method_args:
                 self._process_minimap_vision(packet)
@@ -188,8 +291,14 @@ class GameStateTracker:
                 ship = self._build_ship_state(entity_id, props, t)
                 ships[entity_id] = ship
 
-            elif entity_type == "BattleLogic":
+            elif entity_type in ("BattleLogic", "BattleEntity"):
                 battle = self._build_battle_state(props, state)
+
+        # Build capture points even if BattleLogic entity is missing
+        if not battle.capture_points:
+            cap_points = self._build_capture_points(state)
+            if cap_points:
+                battle.capture_points = cap_points
 
         return GameState(timestamp=t, ships=ships, battle=battle)
 
@@ -322,10 +431,17 @@ class GameStateTracker:
                         is_detected=mm_det,
                         death_position=death_position,
                     )
-                elif etype == "BattleLogic":
+                elif etype in ("BattleLogic", "BattleEntity"):
                     battle = self._build_battle_state(
                         props, running,
                     )
+
+            # Build capture points even if BattleLogic is missing
+            if not battle.capture_points:
+                cap_points = self._build_capture_points(running)
+                if cap_points:
+                    battle.capture_points = cap_points
+
             yield GameState(
                 timestamp=t, ships=ships, battle=battle,
             )
@@ -340,7 +456,7 @@ class GameStateTracker:
         """Get battle-level state at time t."""
         state = self._rebuild_state_at(t)
         for entity_id, props in state.items():
-            if self._entity_types.get(entity_id) == "BattleLogic":
+            if self._entity_types.get(entity_id) in ("BattleLogic", "BattleEntity"):
                 return self._build_battle_state(props, state)
         return BattleState()
 
@@ -432,6 +548,62 @@ class GameStateTracker:
         """Get current property values for an entity."""
         return self._current.get(entity_id, {})
 
+    @property
+    def own_vehicle_id(self) -> int | None:
+        """The Vehicle entity_id owned by the replay's player (from OwnShip packet)."""
+        return self._own_vehicle_id
+
+    @property
+    def version_string(self) -> str | None:
+        """Game version string from the Version packet."""
+        return self._version_string
+
+    @property
+    def map_arena_id(self) -> int | None:
+        """Arena ID from the Map packet."""
+        return self._map_arena_id
+
+    @property
+    def server_time(self) -> float | None:
+        """Absolute server time from the ServerTimestamp packet."""
+        return self._server_time
+
+    def active_consumables_at(
+        self, entity_id: int, t: float,
+    ) -> list[tuple[int, float, float]]:
+        """Get active consumables for an entity at time t.
+
+        Returns list of (slot_index, activated_at, duration)
+        for consumables that are currently active (activated_at ≤ t < activated_at + duration).
+
+        The slot_index maps to the ship's consumable slot ordering from
+        GameParams (0=first slot, 1=second, etc.).
+        """
+        entries = self._consumable_activations.get(entity_id)
+        if not entries:
+            return []
+
+        # Map cons_id → slot_index using the setConsumables pickle mapping
+        id_to_slot = self._consumable_id_to_slot.get(entity_id, {})
+
+        active = []
+        for activated_at, cons_id, duration in entries:
+            if activated_at <= t < activated_at + duration:
+                slot_idx = id_to_slot.get(cons_id, cons_id)
+                active.append((slot_idx, activated_at, duration))
+        return active
+
+    def is_entity_in_aoi(self, entity_id: int, t: float) -> bool:
+        """Check if entity is in Area of Interest at time t.
+
+        Returns True if the entity has not left AoI, or if it was
+        re-created after leaving.
+        """
+        leave_time = self._entity_leave_times.get(entity_id)
+        if leave_time is None:
+            return True  # Never left
+        return leave_time > t  # Was still in AoI at time t
+
     def minimap_at(
         self, entity_id: int, t: float,
     ) -> tuple[float, float, float, bool] | None:
@@ -465,19 +637,89 @@ class GameStateTracker:
 
     # --- Private helpers ---
 
+    def _track_consumable_slots(self, packet: Packet) -> None:
+        """Build cons_id → display_index mapping from setConsumables pickle.
+
+        The pickle contains {'consumablesDict': [(cons_id, (...))]}.
+        The list position in consumablesDict = display index for rendering.
+        cons_id = game internal consumable type ID used in onConsumableUsed.
+
+        Note: the pickle ordering does NOT match GameParams AbilitySlot ordering.
+        We use the pickle ordering as the authoritative display order.
+        """
+        import pickle as _pickle
+
+        args = packet.method_args
+        if not args:
+            return
+        raw = args.get("arg0", b"")
+        if not isinstance(raw, bytes) or len(raw) < 10:
+            return
+
+        try:
+            data = _pickle.loads(raw, encoding="latin-1")
+        except Exception:
+            return
+
+        if not isinstance(data, dict):
+            return
+        cons_list = data.get("consumablesDict")
+        if not isinstance(cons_list, list):
+            return
+
+        mapping: dict[int, int] = {}
+        for display_idx, entry in enumerate(cons_list):
+            if isinstance(entry, (list, tuple)) and len(entry) >= 1:
+                cons_id = entry[0]
+                if isinstance(cons_id, int):
+                    mapping[cons_id] = display_idx
+
+        if mapping:
+            self._consumable_id_to_slot[packet.entity_id] = mapping
+
+    def _track_consumable_used(self, packet: Packet) -> None:
+        """Track consumable activation from onConsumableUsed.
+
+        Args in method_args:
+            consumableUsageParams: BLOB — usage_type(u8) + consumable_id(u8)
+            workTimeLeft: FLOAT32 — duration in seconds
+        """
+        args = packet.method_args
+        if not args:
+            return
+
+        # Get the BLOB param (may be named or positional)
+        params = args.get("consumableUsageParams") or args.get("arg0", b"")
+        duration = args.get("workTimeLeft") or args.get("arg1", 0.0)
+
+        if isinstance(params, bytes) and len(params) >= 2:
+            consumable_id = params[1]  # Second byte = consumable slot/type
+        else:
+            return
+
+        if isinstance(duration, (int, float)) and 0.0 <= duration <= 300.0:
+            self._consumable_activations.setdefault(
+                packet.entity_id, [],
+            ).append((packet.timestamp, consumable_id, float(duration)))
+
     def _process_minimap_vision(self, packet: Packet) -> None:
         """Process updateMinimapVisionInfo method call (Trap 5/6).
 
         Decodes packed bitfield per vehicle and stores minimap position data.
         """
         args = packet.method_args or {}
-        entries = args.get("arg0", [])
-        if isinstance(entries, dict):
-            entries = [entries]
-        if not isinstance(entries, list):
+        # updateMinimapVisionInfo has two MINIMAPINFO args (ally + enemy vision)
+        all_entries: list = []
+        for arg_key in ("arg0", "arg1"):
+            entries = args.get(arg_key, [])
+            if isinstance(entries, dict):
+                entries = [entries]
+            if isinstance(entries, list):
+                all_entries.extend(entries)
+        if not all_entries:
             return
 
-        for entry in entries:
+        for entry in all_entries:
             if not isinstance(entry, dict):
                 continue
             vehicle_id = entry.get("vehicleID", 0)
@@ -610,6 +852,78 @@ class GameStateTracker:
             death_position=death_position,
         )
 
+    @staticmethod
+    def _snapshot_value(value: Any) -> Any:
+        """Create a plain-dict snapshot of a value for history recording.
+
+        construct Containers are dict subclasses with a _io (BytesIO)
+        attribute that cannot be deepcopied. We recursively convert to
+        plain dicts, skipping private keys like '_io'.
+        """
+        if isinstance(value, dict):
+            return {
+                k: GameStateTracker._snapshot_value(v)
+                for k, v in value.items()
+                if not k.startswith("_")
+            }
+        if isinstance(value, list):
+            return [GameStateTracker._snapshot_value(v) for v in value]
+        return value
+
+    def _build_capture_points(
+        self, all_state: dict[int, dict[str, Any]],
+    ) -> list[CapturePointState]:
+        """Build capture point states from InteractiveZone entities."""
+        cap_points: list[CapturePointState] = []
+        for entity_id, props in all_state.items():
+            if self._entity_types.get(entity_id) != "InteractiveZone":
+                continue
+            cs_raw = props.get("componentsState", {})
+            cap_logic: dict[str, Any] = {}
+            ctrl_point: dict[str, Any] = {}
+            if isinstance(cs_raw, dict):
+                cap_logic = cs_raw.get("captureLogic") or {}
+                ctrl_point = cs_raw.get("controlPoint") or {}
+
+            cap_points.append(CapturePointState(
+                entity_id=entity_id,
+                radius=float(props.get("radius", 0)),
+                team_id=int(props.get("teamId", 0)),
+                progress=(
+                    float(cap_logic.get("progress", 0))
+                    if isinstance(cap_logic, dict) else 0.0
+                ),
+                capture_speed=(
+                    float(cap_logic.get("captureSpeed", 0))
+                    if isinstance(cap_logic, dict) else 0.0
+                ),
+                invader_team=(
+                    int(cap_logic.get("invaderTeam", 0))
+                    if isinstance(cap_logic, dict) else 0
+                ),
+                has_invaders=(
+                    bool(cap_logic.get("hasInvaders", False))
+                    if isinstance(cap_logic, dict) else False
+                ),
+                both_inside=(
+                    bool(cap_logic.get("bothInside", False))
+                    if isinstance(cap_logic, dict) else False
+                ),
+                is_enabled=(
+                    bool(cap_logic.get("isEnabled", False))
+                    if isinstance(cap_logic, dict) else False
+                ),
+                point_type=(
+                    int(ctrl_point.get("type", 0))
+                    if isinstance(ctrl_point, dict) else 0
+                ),
+                point_index=(
+                    int(ctrl_point.get("index", -1))
+                    if isinstance(ctrl_point, dict) else -1
+                ),
+            ))
+        return cap_points
+
     def _build_battle_state(
         self, bl_props: dict[str, Any], all_state: dict[int, dict[str, Any]]
     ) -> BattleState:
@@ -623,37 +937,7 @@ class GameStateTracker:
                     team_scores[tid] = team_entry.get("state", 0)
 
         # Build capture point states from InteractiveZone entities
-        cap_points: list[CapturePointState] = []
-        for entity_id, props in all_state.items():
-            if self._entity_types.get(entity_id) == "InteractiveZone":
-                cs_raw = props.get("componentsState", {})
-                cap_logic: dict[str, Any] = {}
-                ctrl_point: dict[str, Any] = {}
-                if isinstance(cs_raw, dict):
-                    cap_logic = cs_raw.get("captureLogic") or {}
-                    ctrl_point = cs_raw.get("controlPoint") or {}
-
-                cap_points.append(CapturePointState(
-                    entity_id=entity_id,
-                    radius=float(props.get("radius", 0)),
-                    team_id=int(props.get("teamId", 0)),
-                    capture_points=(
-                        int(cap_logic.get("capturePoints", 0))
-                        if isinstance(cap_logic, dict) else 0
-                    ),
-                    capture_speed=(
-                        float(cap_logic.get("captureSpeed", 0))
-                        if isinstance(cap_logic, dict) else 0
-                    ),
-                    owner_id=(
-                        int(cap_logic.get("ownerId", 0))
-                        if isinstance(cap_logic, dict) else 0
-                    ),
-                    control_team_id=(
-                        int(ctrl_point.get("teamId", 0))
-                        if isinstance(ctrl_point, dict) else 0
-                    ),
-                ))
+        cap_points = self._build_capture_points(all_state)
 
         battle_result = bl_props.get("battleResult")
         winner = -1
