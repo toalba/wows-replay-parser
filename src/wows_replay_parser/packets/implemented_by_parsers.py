@@ -105,52 +105,25 @@ class ShipConfigParser:
               trailer (small ints)
     """
 
-    # Set of known Ability GameParams IDs — populated lazily from split files.
-    _ability_ids: set[int] | None = None
-
-    @classmethod
-    def _load_ability_ids(cls) -> set[int]:
-        """Load all known Ability IDs from GameParams split files."""
-        if cls._ability_ids is not None:
-            return cls._ability_ids
-        import json
-        from pathlib import Path
-
-        cls._ability_ids = set()
-        # Try common gamedata paths
-        for base in [
-            Path("wows-gamedata/data/split/Ability"),
-            Path("../wows-gamedata/data/split/Ability"),
-        ]:
-            if base.exists():
-                for f in base.iterdir():
-                    if f.suffix == ".json":
-                        try:
-                            d = json.loads(f.read_text())
-                            aid = d.get("id")
-                            if aid:
-                                cls._ability_ids.add(aid)
-                        except Exception:
-                            pass
-                break
-        return cls._ability_ids
-
     @staticmethod
     def parse(data: bytes) -> dict[str, Any]:
         """Parse compact ShipConfig binary format.
 
-        Format (from decompiled ShipConfigDescription.py):
-            shipId(u32)
-            unknown(u32)  — skipped by engine (dataBuffer[1:])
-            numUnitTypes(u32)
-            cdSize(u32)   — actual count of module IDs to read
-            module_ids × cdSize (u32 each, 0 = empty)
-            slot_data:    — initSlotsFromCompactDescr
-                sections of [count(u32) + ids × count(u32)]
-                order: modernizations, exteriors, abilities, ensigns
-            navalFlagId(u32)
+        Fully reconstructed from decompiled ShipConfigDescription.py
+        and ShipConfig.initSlotsFromCompactDescr.
+
+        Layout (all uint32 LE):
+            shipId, numUnitTypes, uc_id × N,
+            appliedExternalConfig,
+            ModernizationSlots:  count + ids,
+            ExteriorSlots:       count + ids + autobuy + colorSchemes(count + k/v pairs),
+            AbilitySlots:        count + ids,      ← consumable GameParams IDs
+            EnsignSlots:         count + ids,
+            EcoboostSlots:       count + ids + autobuy,
+            BattleCardSlots:     count + ids,
+            navalFlagId
         """
-        if len(data) < 16:
+        if len(data) < 12:
             log.warning("ShipConfigParser: insufficient data (%d bytes): %s", len(data), data.hex())
             return {"raw": data.hex()}
 
@@ -164,7 +137,7 @@ class ShipConfigParser:
             off += 4
             return val
 
-        def read_section(max_count: int = 50) -> list[int]:
+        def read_section(max_count: int = 100) -> list[int]:
             count = read_u32()
             ids: list[int] = []
             for _ in range(min(count, max_count)):
@@ -173,43 +146,76 @@ class ShipConfigParser:
                 ids.append(read_u32())
             return ids
 
-        ship_params_id = read_u32()  # shipId
-        _unknown = read_u32()        # skipped by engine
-        num_unit_types = read_u32()  # numUnitTypes
-        cd_size = read_u32()         # cdSize — actual module count
+        # The raw property data may have a small leading value (always 1)
+        # that is part of BigWorld's property wire encoding, not the shipId.
+        # Skip it if the first u32 is very small and the second looks like a
+        # GameParams ID (> 1M).
+        first = struct.unpack_from("<I", data, 0)[0]
+        second = struct.unpack_from("<I", data, 4)[0]
+        if first <= 1 and second > 1_000_000:
+            read_u32()  # skip leading marker
 
-        # Read cdSize module IDs (may include zeros for empty slots)
-        modules = []
-        for _ in range(min(cd_size, 50)):
+        # Header: shipId, then a skipped value, then numUnitTypes
+        # (decompiled: dataBuffer[1:] skips first element after shipId)
+        ship_id = read_u32()
+        _skipped = read_u32()  # total count or size hint — skipped by engine
+        num_unit_types = read_u32()
+
+        # Module IDs (numUnitTypes entries, 0 = empty)
+        modules: list[int] = []
+        for _ in range(min(num_unit_types, 50)):
             if off + 4 > len(data):
                 break
             modules.append(read_u32())
 
-        # Slot compact description: sections of [count + ids]
-        # Order: modernizations, exteriors, abilities, ensigns
-        modernizations = read_section() if off + 4 <= len(data) else []
-        exteriors = read_section() if off + 4 <= len(data) else []
+        # Applied external config
+        applied_external_config = read_u32() if off + 4 <= len(data) else 0
 
-        # Abilities section — filter zeros (empty slots)
+        # Modernization slots
+        modernizations = read_section() if off + 4 <= len(data) else []
+
+        # Exterior slots (has extra autobuy + colorSchemes)
+        exteriors = read_section() if off + 4 <= len(data) else []
+        autobuy_info = read_u32() if off + 4 <= len(data) else 0
+        color_schemes: dict[int, int] = {}
+        if off + 4 <= len(data):
+            cs_count = read_u32()
+            for _ in range(min(cs_count, 50)):
+                if off + 8 > len(data):
+                    break
+                key = read_u32()
+                value = read_u32()
+                color_schemes[key] = value
+
+        # Ability slots — consumable GameParams IDs
         raw_abilities = read_section() if off + 4 <= len(data) else []
         ability_ids = [a for a in raw_abilities if a > 0]
 
-        # Ensigns
+        # Ensign slots
         ensigns = read_section() if off + 4 <= len(data) else []
 
-        # Remaining: navalFlagId + possible trailer
-        trailer: list[int] = []
-        while off + 4 <= len(data):
-            trailer.append(read_u32())
+        # Ecoboost slots (has extra autobuy)
+        ecoboosts = read_section() if off + 4 <= len(data) else []
+        _eco_autobuy = read_u32() if off + 4 <= len(data) else 0
+
+        # BattleCard slots
+        battle_cards = read_section() if off + 4 <= len(data) else []
+
+        # Naval flag ID
+        naval_flag_id = read_u32() if off + 4 <= len(data) else 0
 
         return {
-            "ship_params_id": ship_params_id,
+            "ship_id": ship_id,
             "modules": [m for m in modules if m > 0],
+            "applied_external_config": applied_external_config,
             "modernizations": modernizations,
             "exteriors": exteriors,
+            "color_schemes": color_schemes,
             "ability_ids": ability_ids,
             "ensigns": ensigns,
-            "trailer": trailer,
+            "ecoboosts": ecoboosts,
+            "battle_cards": battle_cards,
+            "naval_flag_id": naval_flag_id,
         }
 
 
