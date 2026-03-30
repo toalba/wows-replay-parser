@@ -167,7 +167,9 @@ def parse_replay(
             for idx, child in enumerate(
                 c for c in _cs if isinstance(c.tag, str)
             ):
-                registry.register_type_id(idx, child.tag)
+                # Wire type_idx is 1-based (BigWorld convention),
+                # entities.xml enumeration is 0-based.
+                registry.register_type_id(idx + 1, child.tag)
     else:
         # Fallback: auto-detect type_id mapping from packet data
         type_mapping = detect_type_id_mapping(replay.packet_data, registry)
