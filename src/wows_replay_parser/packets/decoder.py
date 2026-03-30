@@ -31,6 +31,40 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def _dict_to_list(d: dict) -> list:
+    """Convert a dict with numeric string keys to a list."""
+    if not d:
+        return []
+    max_idx = max((int(k) for k in d if k.isdigit()), default=-1)
+    result = [None] * (max_idx + 1)
+    for k, v in d.items():
+        if k.isdigit():
+            result[int(k)] = v
+    return result
+
+
+def _replace_child(root: dict, path: list[str], new_value: Any) -> None:
+    """Replace the value at path[-1] within root with new_value."""
+    target = root
+    for key in path[:-1]:
+        if isinstance(target, dict):
+            target = target.get(key, {})
+        elif isinstance(target, list):
+            try:
+                target = target[int(key)]
+            except (ValueError, IndexError):
+                return
+    last = path[-1] if path else None
+    if last is not None:
+        if isinstance(target, dict):
+            target[last] = new_value
+        elif isinstance(target, list):
+            try:
+                target[int(last)] = new_value
+            except (ValueError, IndexError):
+                pass
+
+
 class PacketDecoder:
     """
     Decodes the binary packet stream from a replay.
@@ -589,32 +623,70 @@ class PacketDecoder:
             if self._tracker is not None:
                 entity_props = self._tracker._current.setdefault(entity_id, {})
                 current = entity_props.get(prop_def.name)
-                if current is not None:
-                    # Navigate the path and set the value
-                    target = current
-                    for key in path:
-                        next_target = None
-                        if isinstance(target, dict) and key in target:
-                            next_target = target[key]
-                        elif isinstance(target, (list, tuple)):
-                            try:
-                                next_target = target[int(key)]
-                            except (ValueError, IndexError):
-                                break
-                        if next_target is None:
+
+                # If property doesn't exist yet (e.g. OWN_CLIENT properties
+                # like privateVehicleState that are never set via entity-create),
+                # build the intermediate path as nested dicts so the update
+                # has somewhere to land.
+                if current is None:
+                    current = {}
+                    entity_props[prop_def.name] = current
+
+                # Navigate the path, tracking parent for array conversion
+                target = current
+                parent = None
+                parent_key = None
+                for key in path:
+                    next_target = None
+                    if isinstance(target, dict) and key in target:
+                        next_target = target[key]
+                    elif isinstance(target, dict):
+                        next_target = {}
+                        target[key] = next_target
+                    elif isinstance(target, list):
+                        try:
+                            next_target = target[int(key)]
+                        except (ValueError, IndexError):
                             break
-                        target = next_target
-                    else:
-                        # Set the field on the final target
+                    if next_target is None:
+                        break
+                    parent = target
+                    parent_key = key
+                    target = next_target
+                else:
+                    if field_name.startswith("__slice__"):
+                        # Array slice: insert value at idx1..idx2
+                        parts = field_name.split("__")
+                        try:
+                            idx1, idx2 = int(parts[2]), int(parts[3])
+                        except (IndexError, ValueError):
+                            idx1 = idx2 = 0
+
+                        # Ensure target is a list (may be a dict from
+                        # intermediate path creation)
                         if isinstance(target, dict):
-                            target[field_name] = value
+                            target = _dict_to_list(target)
+                            if parent is not None and parent_key is not None:
+                                if isinstance(parent, dict):
+                                    parent[parent_key] = target
+                                elif isinstance(parent, list):
+                                    try:
+                                        parent[int(parent_key)] = target
+                                    except (ValueError, IndexError):
+                                        pass
+
+                        if isinstance(target, list):
+                            target[idx1:idx2] = [value]
                             packet.property_value = current
-                        elif isinstance(target, list):
-                            try:
-                                target[int(field_name)] = value
-                                packet.property_value = current
-                            except (ValueError, IndexError):
-                                pass
+                    elif isinstance(target, list):
+                        try:
+                            target[int(field_name)] = value
+                            packet.property_value = current
+                        except (ValueError, IndexError):
+                            pass
+                    elif isinstance(target, dict):
+                        target[field_name] = value
+                        packet.property_value = current
 
     def _parse_nested_update(
         self,
@@ -706,22 +778,42 @@ class PacketDecoder:
                             current = None
                             break
                 arr_len = len(current) if isinstance(current, (list, tuple)) else 0
-                count = arr_len + 1 if is_slice else max(arr_len, 1)
-                bits = _bits_for_count(count)
-                idx1 = reader.read_bits(bits)
-                idx2 = reader.read_bits(bits) if is_slice else None
-                remaining = reader.remaining_bytes()
-                if not remaining:
-                    return None
-                elem_type = type_info.get("element_type", "BLOB")
-                schema = self._schema._resolve_type(elem_type, in_method=True)
-                if schema is None:
-                    return None
-                try:
-                    value = schema.parse(remaining)
-                    return (path, str(idx1), value)
-                except Exception:
-                    return None
+
+                if is_slice:
+                    # SetRange: idx1..idx2 replaced with new values
+                    count = arr_len + 1
+                    bits = _bits_for_count(count)
+                    idx1 = reader.read_bits(bits)
+                    idx2 = reader.read_bits(bits)
+                    remaining = reader.remaining_bytes()
+                    if not remaining:
+                        return None
+                    elem_type = type_info.get("element_type", "BLOB")
+                    schema = self._schema._resolve_type(elem_type, in_method=True)
+                    if schema is None:
+                        return None
+                    try:
+                        value = schema.parse(remaining)
+                        # Return special marker for slice operations
+                        return (path, f"__slice__{idx1}__{idx2}", value)
+                    except Exception:
+                        return None
+                else:
+                    # SetElement: update single element at index
+                    bits = _bits_for_count(max(arr_len, 1))
+                    idx1 = reader.read_bits(bits)
+                    remaining = reader.remaining_bytes()
+                    if not remaining:
+                        return None
+                    elem_type = type_info.get("element_type", "BLOB")
+                    schema = self._schema._resolve_type(elem_type, in_method=True)
+                    if schema is None:
+                        return None
+                    try:
+                        value = schema.parse(remaining)
+                        return (path, str(idx1), value)
+                    except Exception:
+                        return None
 
             return None
 
