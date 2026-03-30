@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from wows_replay_parser.ship_config import ShipConfig, parse_ship_config
+
 if TYPE_CHECKING:
     from wows_replay_parser.gamedata.entity_registry import EntityRegistry
     from wows_replay_parser.packets.types import Packet
@@ -102,6 +104,8 @@ class PlayerInfo:
     clan_tag: str = ""
     max_health: int = 0
     is_bot: bool = False
+    ship_config: ShipConfig | None = None  # Parsed loadout from shipConfigDump
+    crew_id: int = 0  # GameParams ID of the captain (from crewParams[0])
 
 
 def build_roster(
@@ -368,6 +372,14 @@ def _match_via_arena_state(
             ship_id = ap.get("shipParamsId", 0)
             account_id = ap.get("accountDBID", 0)
 
+        # Parse ship loadout from shipConfigDump
+        config_dump = ap.get("shipConfigDump")
+        ship_config = parse_ship_config(config_dump) if config_dump else None
+
+        # Extract crew ID from crewParams
+        crew_params = ap.get("crewParams")
+        crew_id = crew_params[0] if isinstance(crew_params, (list, tuple)) and crew_params else 0
+
         roster.append(PlayerInfo(
             account_id=account_id,
             name=name,
@@ -378,6 +390,8 @@ def _match_via_arena_state(
             clan_tag=ap.get("clanTag", ""),
             max_health=int(ap.get("maxHealth", 0)),
             is_bot=is_bot,
+            ship_config=ship_config,
+            crew_id=int(crew_id) if crew_id else 0,
         ))
 
     return roster
