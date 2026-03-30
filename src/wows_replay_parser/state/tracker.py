@@ -14,9 +14,28 @@ from .models import (
     BattleState,
     CapturePointState,
     GameState,
+    HoldScoring,
+    KillScoring,
     PropertyChange,
     ShipState,
 )
+
+_SENTINEL = object()
+
+
+def _container_get(obj: Any, key: str, default: Any = None) -> Any:
+    """Get a value from a construct Container or plain dict.
+
+    Handles both attribute access (Container) and dict access.
+    Correctly preserves falsy values (0, False, empty string).
+    """
+    val = getattr(obj, key, _SENTINEL)
+    if val is not _SENTINEL:
+        return val
+    if isinstance(obj, dict) and key in obj:
+        return obj[key]
+    return default
+
 
 # Properties that map to ShipState fields
 _SHIP_PROPERTY_MAP: dict[str, str] = {
@@ -995,6 +1014,44 @@ class GameStateTracker:
             winner = battle_result.get("winnerTeamId", -1)
             reason = battle_result.get("finishReason", 0)
 
+        # Extract scoring config from BattleLogic.state.missions
+        # This is set once at battle start and doesn't change.
+        # NB: bl_props["state"] is the BattleLogic componentsState,
+        # NOT teams[X].state (which is the current score integer).
+        team_win_score = 1000
+        team_start_scores: dict[int, int] = {}
+        kill_scoring: list[KillScoring] = []
+        hold_scoring: list[HoldScoring] = []
+
+        bl_state = bl_props.get("state")
+        if bl_state is not None:
+            missions = _container_get(bl_state, "missions")
+            if missions is not None:
+                team_win_score = int(_container_get(missions, "teamWinScore", 1000))
+
+                # teamsScore: starting score per team
+                for entry in _container_get(missions, "teamsScore", []):
+                    tid = _container_get(entry, "teamId")
+                    score = _container_get(entry, "score")
+                    if tid is not None and score is not None:
+                        team_start_scores[int(tid)] = int(score)
+
+                # kill scoring
+                for entry in _container_get(missions, "kill", []):
+                    kill_scoring.append(KillScoring(
+                        ship_type=str(_container_get(entry, "shipType", "")),
+                        reward=int(_container_get(entry, "reward", 0)),
+                        penalty=int(_container_get(entry, "penalty", 0)),
+                    ))
+
+                # hold scoring
+                for entry in _container_get(missions, "hold", []):
+                    hold_scoring.append(HoldScoring(
+                        reward=int(_container_get(entry, "reward", 0)),
+                        period=int(_container_get(entry, "period", 5)),
+                        cp_indices=list(_container_get(entry, "cpIndices", [])),
+                    ))
+
         return BattleState(
             battle_stage=int(bl_props.get("battleStage", 0)),
             time_left=int(bl_props.get("timeLeft", 0)),
@@ -1002,6 +1059,10 @@ class GameStateTracker:
             capture_points=cap_points,
             battle_result_winner=winner,
             battle_result_reason=reason,
+            team_win_score=team_win_score,
+            team_start_scores=team_start_scores,
+            kill_scoring=kill_scoring,
+            hold_scoring=hold_scoring,
         )
 
     @staticmethod

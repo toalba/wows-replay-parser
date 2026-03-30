@@ -64,6 +64,24 @@ class CapturePointState:
 
 
 @dataclass
+class KillScoring:
+    """Points awarded/penalized when a ship type is destroyed."""
+
+    ship_type: str  # "Destroyer", "Cruiser", "Battleship", "AirCarrier", "Submarine"
+    reward: int  # Points awarded to killing team
+    penalty: int  # Points lost by dying team
+
+
+@dataclass
+class HoldScoring:
+    """Points awarded per tick for holding capture points."""
+
+    reward: int  # Points per tick
+    period: int  # Tick interval in seconds
+    cp_indices: list[int] = field(default_factory=list)  # Which cap points
+
+
+@dataclass
 class BattleState:
     """Snapshot of battle-level state."""
 
@@ -73,6 +91,11 @@ class BattleState:
     capture_points: list[CapturePointState] = field(default_factory=list)
     battle_result_winner: int = -1
     battle_result_reason: int = 0
+    # Scoring config (from BattleLogic.state.missions, set once at battle start)
+    team_win_score: int = 1000
+    team_start_scores: dict[int, int] = field(default_factory=dict)
+    kill_scoring: list[KillScoring] = field(default_factory=list)
+    hold_scoring: list[HoldScoring] = field(default_factory=list)
 
 
 @dataclass
