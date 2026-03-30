@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 import math
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -95,6 +95,14 @@ class GameStateTracker:
 
         ptype = packet.type
 
+        # Periodic snapshots — take BEFORE processing the packet so
+        # the snapshot reflects the state just before this timestamp.
+        # This ensures bisect_right(history_timestamps, snapshot_time)
+        # correctly excludes all entries at or after this timestamp.
+        if packet.timestamp - self._last_snapshot_time >= _SNAPSHOT_INTERVAL:
+            self._snapshots.append((packet.timestamp, copy.deepcopy(self._current)))
+            self._last_snapshot_time = packet.timestamp
+
         # Entity creation — register type
         creation_types = (
             PacketType.BASE_PLAYER_CREATE,
@@ -117,7 +125,9 @@ class GameStateTracker:
                 entry = (packet.timestamp, packet.position, 0.0)
                 self._positions.setdefault(packet.entity_id, []).insert(0, entry)
 
-            # Store initial properties from ENTITY_CREATE inline state
+            # Store initial properties from ENTITY_CREATE inline state.
+            # Snapshot values for history so nested property mutations
+            # don't corrupt the historical record.
             if (
                 ptype == PacketType.ENTITY_CREATE
                 and packet.initial_properties
@@ -132,7 +142,7 @@ class GameStateTracker:
                         entity_type=entity_type,
                         property_name=prop_name,
                         old_value=None,
-                        new_value=prop_value,
+                        new_value=self._snapshot_value(prop_value),
                     )
                     self._history.append(change)
                     self._history_timestamps.append(change.timestamp)
@@ -151,7 +161,7 @@ class GameStateTracker:
                     entity_type=entity_type,
                     property_name=packet.property_name,
                     old_value=old_value,
-                    new_value=packet.property_value,
+                    new_value=self._snapshot_value(packet.property_value),
                 )
                 self._history.append(change)
                 self._history_timestamps.append(change.timestamp)
@@ -286,11 +296,6 @@ class GameStateTracker:
                 self._history_timestamps.append(change.timestamp)
                 changes.append(change)
 
-        # Periodic snapshots
-        if packet.timestamp - self._last_snapshot_time >= _SNAPSHOT_INTERVAL:
-            self._snapshots.append((packet.timestamp, copy.deepcopy(self._current)))
-            self._last_snapshot_time = packet.timestamp
-
         return changes
 
     def state_at(self, t: float) -> GameState:
@@ -359,9 +364,10 @@ class GameStateTracker:
                     for eid, props in snapshot_data.items()
                 }
 
-        # Start history cursor after the snapshot so we don't
-        # double-apply changes already baked into the snapshot.
-        history_idx = bisect_right(self._history_timestamps, snapshot_time)
+        # Start history cursor at the snapshot time (bisect_left).
+        # The snapshot is taken BEFORE the packet at snapshot_time is
+        # processed, so history entries at snapshot_time need to be applied.
+        history_idx = bisect_left(self._history_timestamps, snapshot_time)
 
         # Per-entity position cursors: entity_id → index into
         # self._positions[entity_id]
@@ -542,7 +548,7 @@ class GameStateTracker:
         idx = bisect_right(timestamps, t)
 
         if idx == 0:
-            return positions[0][1]
+            return None  # No position recorded yet at time t
         if idx >= len(positions):
             return positions[-1][1]
 
@@ -860,8 +866,11 @@ class GameStateTracker:
                     for eid, props in snapshot_data.items()
                 }
 
-        # Use bisect to find the slice of history between snapshot and t
-        lo = bisect_right(self._history_timestamps, snapshot_time)
+        # Use bisect to find the slice of history between snapshot and t.
+        # The snapshot is taken BEFORE processing the packet at snapshot_time,
+        # so all history entries at snapshot_time are NOT in the snapshot.
+        # bisect_left includes them.
+        lo = bisect_left(self._history_timestamps, snapshot_time)
         hi = bisect_right(self._history_timestamps, t)
 
         for change in self._history[lo:hi]:
