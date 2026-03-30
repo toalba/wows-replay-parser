@@ -285,8 +285,10 @@ class GameStateTracker:
             entity_type = self._entity_types.get(entity_id, "")
 
             if entity_type == "Vehicle":
-                # Only include ships that have received position data
-                if self.position_at(entity_id, t) is None:
+                # Include ships with world position OR minimap position
+                has_world_pos = self.position_at(entity_id, t) is not None
+                has_mm_pos = self.minimap_at(entity_id, t) is not None
+                if not has_world_pos and not has_mm_pos:
                     continue
                 ship = self._build_ship_state(entity_id, props, t)
                 ships[entity_id] = ship
@@ -325,10 +327,13 @@ class GameStateTracker:
         pos_cursors: dict[int, int] = {}
         # Cached last-known position + yaw per entity
         pos_cache: dict[int, tuple[tuple[float, float, float], float]] = {}
+        # Cached last position timestamp per entity (for stale detection)
+        pos_time_cache: dict[int, float] = {}
 
         # Minimap vision cursors (Trap 5/6)
         mm_cursors: dict[int, int] = {}
         mm_cache: dict[int, tuple[float, float, float, bool]] = {}
+        mm_time_cache: dict[int, float] = {}
 
         for t in timestamps:
             # Apply property changes up to time t
@@ -357,6 +362,7 @@ class GameStateTracker:
                 if cursor > 0:
                     entry = positions[cursor - 1]
                     pos_cache[eid] = (entry[1], entry[2])
+                    pos_time_cache[eid] = entry[0]
 
             # Advance minimap vision cursors
             for eid, mm_entries in self._minimap_positions.items():
@@ -371,6 +377,7 @@ class GameStateTracker:
                     e = mm_entries[cursor - 1]
                     is_detected = e[4] and not e[5]
                     mm_cache[eid] = (e[1], e[2], e[3], is_detected)
+                    mm_time_cache[eid] = e[0]
 
             # Build GameState using cached positions
             ships: dict[int, ShipState] = {}
@@ -387,13 +394,36 @@ class GameStateTracker:
                         yaw = death_yaw
                     else:
                         cached = pos_cache.get(entity_id)
-                        if cached is None:
-                            continue  # not yet spotted
-                        pos = cached[0]
-                        yaw = cached[1]
+                        mm = mm_cache.get(entity_id)
 
-                    # Minimap vision (Trap 5/6)
-                    mm = mm_cache.get(entity_id)
+                        if cached is not None:
+                            pos = cached[0]
+                            yaw = cached[1]
+
+                            # Use minimap position if world pos is stale.
+                            if mm is not None:
+                                last_pos_t = pos_time_cache.get(entity_id, 0.0)
+                                if t - last_pos_t > 5.0:
+                                    last_mm_t = mm_time_cache.get(entity_id, 0.0)
+                                    if last_mm_t > last_pos_t + 2.0:
+                                        mm_x, mm_z, mm_h, _ = mm
+                                        if mm_x != 0.0 or mm_z != 0.0:
+                                            pos = (mm_x, 0.0, mm_z)
+                                            yaw = mm_h
+
+                        elif mm is not None:
+                            mm_x, mm_z, mm_h, _ = mm
+                            if mm_x != 0.0 or mm_z != 0.0:
+                                pos = (mm_x, 0.0, mm_z)
+                                yaw = mm_h
+                            else:
+                                continue
+                        else:
+                            continue  # not yet spotted
+
+                    # Minimap vision (Trap 5/6) — mm already fetched above
+                    if mm is None:
+                        mm = mm_cache.get(entity_id)
                     mm_x = mm[0] if mm else 0.0
                     mm_z = mm[1] if mm else 0.0
                     mm_h = mm[2] if mm else 0.0
@@ -806,27 +836,46 @@ class GameStateTracker:
         """Build a ShipState from raw property dict."""
         is_alive = bool(props.get("isAlive", True))
 
+        # Minimap vision data (Trap 5/6)
+        minimap_x, minimap_z, minimap_heading, is_detected = 0.0, 0.0, 0.0, False
+        mm = self.minimap_at(entity_id, t)
+        if mm is not None:
+            minimap_x, minimap_z, minimap_heading, is_detected = mm
+
         # Trap 13: use death position for dead ships
         if not is_alive and entity_id in self._death_positions:
             death_pos, death_yaw = self._death_positions[entity_id]
             pos = death_pos
             yaw = death_yaw
         else:
-            pos = self.position_at(entity_id, t) or (0.0, 0.0, 0.0)
-            # Get yaw from position history
-            yaw = 0.0
-            positions = self._positions.get(entity_id)
-            if positions:
-                timestamps = [p[0] for p in positions]
-                idx = bisect_right(timestamps, t)
-                if idx > 0:
-                    yaw = positions[idx - 1][2]
+            world_pos = self.position_at(entity_id, t)
+            if world_pos is not None:
+                pos = world_pos
+                yaw = 0.0
+                positions = self._positions.get(entity_id)
+                if positions:
+                    timestamps = [p[0] for p in positions]
+                    idx = bisect_right(timestamps, t)
+                    if idx > 0:
+                        yaw = positions[idx - 1][2]
 
-        # Minimap vision data (Trap 5/6)
-        minimap_x, minimap_z, minimap_heading, is_detected = 0.0, 0.0, 0.0, False
-        mm = self.minimap_at(entity_id, t)
-        if mm is not None:
-            minimap_x, minimap_z, minimap_heading, is_detected = mm
+                # Check if world position is stale — use minimap if newer
+                if positions and mm is not None:
+                    last_pos_t = positions[min(idx, len(positions)) - 1][0] if idx > 0 else 0.0
+                    mm_entries = self._minimap_positions.get(entity_id, [])
+                    mm_ts = [e[0] for e in mm_entries]
+                    mm_idx = bisect_right(mm_ts, t)
+                    last_mm_t = mm_entries[mm_idx - 1][0] if mm_idx > 0 else 0.0
+                    if last_mm_t > last_pos_t + 2.0 and (minimap_x != 0.0 or minimap_z != 0.0):
+                        pos = (minimap_x, 0.0, minimap_z)
+                        yaw = minimap_heading
+            elif mm is not None and (minimap_x != 0.0 or minimap_z != 0.0):
+                # No world position — use minimap position
+                pos = (minimap_x, 0.0, minimap_z)
+                yaw = minimap_heading
+            else:
+                pos = (0.0, 0.0, 0.0)
+                yaw = 0.0
 
         # Death position for the state model
         death_pos_val = self._death_positions.get(entity_id)
