@@ -66,6 +66,11 @@ def _resolve_type_structure(
         {"kind": "leaf", "type_name": type_name}
     or None if unresolvable.
     """
+    # Handle inline ARRAY<of>ELEMENT_TYPE</of> syntax (not in alias registry)
+    if type_name.startswith("ARRAY<of>") and type_name.endswith("</of>"):
+        element_type = type_name[9:-5]  # strip ARRAY<of> and </of>
+        return {"kind": "array", "element_type": element_type}
+
     alias = aliases.resolve(type_name)
     if alias is None:
         return None

@@ -589,23 +589,32 @@ class PacketDecoder:
             if self._tracker is not None:
                 entity_props = self._tracker._current.setdefault(entity_id, {})
                 current = entity_props.get(prop_def.name)
-                if current is not None and isinstance(current, dict):
+                if current is not None:
                     # Navigate the path and set the value
                     target = current
                     for key in path:
+                        next_target = None
                         if isinstance(target, dict) and key in target:
                             next_target = target[key]
-                            if isinstance(next_target, dict):
-                                target = next_target
-                            else:
+                        elif isinstance(target, (list, tuple)):
+                            try:
+                                next_target = target[int(key)]
+                            except (ValueError, IndexError):
                                 break
-                        else:
+                        if next_target is None:
                             break
+                        target = next_target
                     else:
-                        # Set the field
+                        # Set the field on the final target
                         if isinstance(target, dict):
                             target[field_name] = value
                             packet.property_value = current
+                        elif isinstance(target, list):
+                            try:
+                                target[int(field_name)] = value
+                                packet.property_value = current
+                            except (ValueError, IndexError):
+                                pass
 
     def _parse_nested_update(
         self,

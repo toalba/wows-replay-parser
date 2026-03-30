@@ -996,14 +996,6 @@ class GameStateTracker:
         self, bl_props: dict[str, Any], all_state: dict[int, dict[str, Any]]
     ) -> BattleState:
         """Build BattleState from BattleLogic properties."""
-        teams_raw = bl_props.get("teams")
-        team_scores: dict[int, int] = {}
-        if isinstance(teams_raw, dict):
-            for team_entry in teams_raw.get("teams", []):
-                if isinstance(team_entry, dict):
-                    tid = team_entry.get("teamId", 0)
-                    team_scores[tid] = team_entry.get("state", 0)
-
         # Build capture point states from InteractiveZone entities
         cap_points = self._build_capture_points(all_state)
 
@@ -1014,10 +1006,12 @@ class GameStateTracker:
             winner = battle_result.get("winnerTeamId", -1)
             reason = battle_result.get("finishReason", 0)
 
-        # Extract scoring config from BattleLogic.state.missions
-        # This is set once at battle start and doesn't change.
-        # NB: bl_props["state"] is the BattleLogic componentsState,
-        # NOT teams[X].state (which is the current score integer).
+        # Extract scoring config + live scores from BattleLogic.state.missions.
+        # The live team scores are in state.missions.teamsScore[N].score,
+        # updated via nested property packets throughout the match.
+        # NB: bl_props["teams"][N].state is the INITIAL default (always 2),
+        # NOT the live score — don't use it.
+        team_scores: dict[int, int] = {}
         team_win_score = 1000
         team_start_scores: dict[int, int] = {}
         kill_scoring: list[KillScoring] = []
@@ -1029,14 +1023,15 @@ class GameStateTracker:
             if missions is not None:
                 team_win_score = int(_container_get(missions, "teamWinScore", 1000))
 
-                # teamsScore: starting score per team
+                # teamsScore: live score per team (updated in-place by nested property)
                 for entry in _container_get(missions, "teamsScore", []):
                     tid = _container_get(entry, "teamId")
                     score = _container_get(entry, "score")
                     if tid is not None and score is not None:
+                        team_scores[int(tid)] = int(score)
                         team_start_scores[int(tid)] = int(score)
 
-                # kill scoring
+                # kill scoring config
                 for entry in _container_get(missions, "kill", []):
                     kill_scoring.append(KillScoring(
                         ship_type=str(_container_get(entry, "shipType", "")),
@@ -1044,7 +1039,7 @@ class GameStateTracker:
                         penalty=int(_container_get(entry, "penalty", 0)),
                     ))
 
-                # hold scoring
+                # hold scoring config
                 for entry in _container_get(missions, "hold", []):
                     hold_scoring.append(HoldScoring(
                         reward=int(_container_get(entry, "reward", 0)),
