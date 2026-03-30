@@ -338,8 +338,30 @@ class GameStateTracker:
         Yields:
             GameState snapshot at each requested timestamp.
         """
+        if not timestamps:
+            return
+
+        # Initialize running state from the snapshot at or before the
+        # first requested timestamp.  This ensures entity-create inline
+        # state (which lives only in snapshots, not in _history) is
+        # included — matching what _rebuild_state_at() does.
+        t0 = timestamps[0]
         running: dict[int, dict[str, Any]] = {}
-        history_idx = 0
+        snapshot_time = -1.0
+
+        if self._snapshots:
+            snapshot_times = [s[0] for s in self._snapshots]
+            idx = bisect_right(snapshot_times, t0)
+            if idx > 0:
+                snapshot_time, snapshot_data = self._snapshots[idx - 1]
+                running = {
+                    eid: dict(props)
+                    for eid, props in snapshot_data.items()
+                }
+
+        # Start history cursor after the snapshot so we don't
+        # double-apply changes already baked into the snapshot.
+        history_idx = bisect_right(self._history_timestamps, snapshot_time)
 
         # Per-entity position cursors: entity_id → index into
         # self._positions[entity_id]
@@ -405,6 +427,7 @@ class GameStateTracker:
                 etype = self._entity_types.get(entity_id, "")
                 if etype == "Vehicle":
                     is_alive = bool(props.get("isAlive", True))
+                    mm = mm_cache.get(entity_id)
 
                     # Trap 13: use death position for dead ships
                     if not is_alive and entity_id in self._death_positions:
