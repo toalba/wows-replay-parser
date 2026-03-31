@@ -8,7 +8,9 @@ with args {arg0: 123, arg1: 456, arg2: 2}" to a typed DeathEvent.
 
 from __future__ import annotations
 
+import json
 import math
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -91,6 +93,8 @@ def _damage_from_receive_damages(pkt: Packet) -> list[DamageEvent]:
     """receiveDamagesOnShip(0:ARRAY<of>DAMAGES</of>).
 
     Each DAMAGES entry: {vehicleID: ENTITY_ID, damage: FLOAT}
+    The method is called ON the target vehicle, so entity_id = target.
+    vehicleID = attacker.
     """
     args = pkt.method_args or {}
     damages = _get(args, "arg0", [])
@@ -111,6 +115,7 @@ def _damage_from_receive_damages(pkt: Packet) -> list[DamageEvent]:
             timestamp=pkt.timestamp,
             entity_id=pkt.entity_id,
             target_id=pkt.entity_id,
+            attacker_id=int(entry.get("vehicleID", 0) or 0),
             damage=float(entry.get("damage", 0) or 0),
             raw_data=entry,
         ))
@@ -548,11 +553,59 @@ _METHOD_FACTORIES: dict[str, Callable[[Packet], GameEvent | list[GameEvent]]] = 
 }
 
 
+_AMMO_TYPE_MAP: dict[str, str] = {
+    "AP": "AP",
+    "HE": "HE",
+    "CS": "SAP",  # Common Shell = SAP
+    "torpedo": "torpedo",
+    "torpedo_alternative": "torpedo",
+    "torpedo_deepwater": "torpedo",
+    "depthcharge": "depth_charge",
+    "missile": "missile",
+}
+
+
+def _build_ammo_lookup(gamedata_path: str | Path | None) -> dict[int, str]:
+    """Build GAMEPARAMS_ID → damage_type string from projectiles.json.
+
+    projectiles.json is a compact lookup: {id_str: {"a": ammoType, "c": caliber}}.
+    Searched in data/ dir and sibling wows-gamedata repo.
+    """
+    if gamedata_path is None:
+        return {}
+    # gamedata_path is entity_defs dir: .../data/scripts_entity/entity_defs
+    gp = Path(gamedata_path).resolve()
+    data_dir = gp.parent.parent  # .../data/
+    repo_root = data_dir.parent  # .../wows-gamedata/
+    candidates = [
+        data_dir / "projectiles.json",
+        repo_root.parent / "wows-gamedata" / "data" / "projectiles.json",
+    ]
+    proj_file = next((c for c in candidates if c.is_file()), None)
+    if proj_file is None:
+        return {}
+    try:
+        raw = json.loads(proj_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    lookup: dict[int, str] = {}
+    for gp_id_str, info in raw.items():
+        ammo_type = info.get("a", "") if isinstance(info, dict) else ""
+        if ammo_type:
+            lookup[int(gp_id_str)] = _AMMO_TYPE_MAP.get(ammo_type, ammo_type)
+    return lookup
+
+
 class EventStream:
     """Converts packets into typed game events."""
 
-    def __init__(self, tracker: GameStateTracker | None = None) -> None:
+    def __init__(
+        self,
+        tracker: GameStateTracker | None = None,
+        gamedata_path: str | Path | None = None,
+    ) -> None:
         self._tracker = tracker
+        self._ammo_lookup = _build_ammo_lookup(gamedata_path)
 
     def process(self, packets: list[Packet]) -> list[GameEvent]:
         """Process all packets into game events."""
@@ -560,6 +613,13 @@ class EventStream:
         for packet in packets:
             result = self._to_event(packet)
             events.extend(result)
+        # Enrich DamageEvents with damage_type from ammo lookup
+        if self._ammo_lookup:
+            for event in events:
+                if isinstance(event, DamageEvent) and event.ammo_id and not event.damage_type:
+                    dtype = self._ammo_lookup.get(event.ammo_id)
+                    if dtype:
+                        event.damage_type = dtype
         return events
 
     def _to_event(self, packet: Packet) -> list[GameEvent]:

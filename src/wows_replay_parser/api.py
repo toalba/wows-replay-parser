@@ -221,7 +221,7 @@ def parse_replay(
     packets = decoder.decode_stream(replay.packet_data)
 
     # Generate events
-    stream = EventStream(tracker=tracker)
+    stream = EventStream(tracker=tracker, gamedata_path=gamedata_path)
     events = stream.process(packets)
 
     # Build player roster and inject team_id into tracker

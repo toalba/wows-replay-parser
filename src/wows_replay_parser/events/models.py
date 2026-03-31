@@ -59,8 +59,9 @@ class DamageEvent(GameEvent):
     """Damage dealt to a ship."""
 
     target_id: int = 0
+    attacker_id: int = 0
     damage: float = 0.0
-    damage_type: str = ""  # AP, HE, SAP, fire, flooding, torpedo, etc.
+    damage_type: str = ""  # AP, HE, SAP, torpedo, fire, flooding, secondary, etc.
     ammo_id: int = 0  # GAMEPARAMS_ID identifying the shell/ammo type
 
 
