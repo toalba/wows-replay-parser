@@ -1,11 +1,16 @@
-"""Ribbon derivation from hit/damage events.
+"""Ribbon extraction and derivation.
 
-Since ~patch 14.8, ribbons are derived client-side from hit events,
-not sent as network packets. This module reimplements basic ribbon
-derivation from the events the parser produces.
+Recording player ribbons: extracted from privateVehicleState.ribbons
+(server-authoritative cumulative counts, OWN_CLIENT property).
+Other players: derived from hit/damage events (approximate).
+
+Wire IDs (0-56) are from the SubRibbon auto-ID space in m53aea2ee.pyc,
+verified by runtime inspection on the game server.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from wows_replay_parser.events.models import (
     DamageEvent,
@@ -15,7 +20,70 @@ from wows_replay_parser.events.models import (
     ShotDestroyedEvent,
 )
 
-# Ribbon IDs from extracted_constants.json (RibbonsType enum)
+# fmt: off
+# Complete wire ribbon IDs (0-56). Verified against 5 replays.
+RIBBON_WIRE_IDS: dict[int, str] = {
+    0:  "MAIN_CALIBER",
+    1:  "TORPEDO",
+    2:  "BOMB",
+    3:  "PLANE",
+    4:  "CRIT",
+    5:  "FRAG",
+    6:  "BURN",
+    7:  "FLOOD",
+    8:  "CITADEL",
+    9:  "BASE_DEFENSE",
+    10: "BASE_CAPTURE",
+    11: "BASE_CAPTURE_ASSIST",
+    12: "SUPPRESSED",
+    13: "SECONDARY_CALIBER",
+    14: "MAIN_CALIBER_OVER_PENETRATION",
+    15: "MAIN_CALIBER_PENETRATION",
+    16: "MAIN_CALIBER_NO_PENETRATION",
+    17: "MAIN_CALIBER_RICOCHET",
+    18: "BUILDING_KILL",
+    19: "DETECTED",
+    20: "BOMB_OVER_PENETRATION",
+    21: "BOMB_PENETRATION",
+    22: "BOMB_NO_PENETRATION",
+    23: "BOMB_RICOCHET",
+    24: "ROCKET",
+    25: "ROCKET_PENETRATION",
+    26: "ROCKET_NO_PENETRATION",
+    27: "SPLANE",
+    28: "BULGE",
+    29: "BOMB_BULGE",
+    30: "ROCKET_BULGE",
+    31: "DBOMB",
+    32: "ACOUSTIC_HIT",
+    33: "DROP",
+    34: "ROCKET_RICOCHET",
+    35: "ROCKET_OVER_PENETRATION",
+    36: "WAVE_KILL_TORPEDO",
+    37: "WAVE_CUT_WAVE",
+    38: "WAVE_HIT_VEHICLE",
+    39: "ACOUSTIC_HIT_NEW",
+    40: "ACOUSTIC_HIT_CURR",
+    41: "ACOUSTIC_HIT_BLOCK",
+    42: "ACID",
+    43: "DBOMB_FULL_DAMAGE",
+    44: "DBOMB_PARTIAL_DAMAGE",
+    45: "MINE",
+    46: "DEMINING_MINE",
+    47: "DEMINING_MINEFIELD",
+    48: "TORPEDO_PHOTON_HIT",
+    49: "TORPEDO_PHOTON_SPLASH",
+    50: "AIM_PULSE_TORPEDO_PHOTON",
+    51: "PHASER_LASER",
+    52: "SHIELD_HIT",
+    53: "SHIELD_REMOVED",
+    54: "ASSIST",
+    55: "MISSILE_HIT",
+    56: "SHOT_DOWN_MISSILE",
+}
+# fmt: on
+
+# Convenience constants for common ribbon IDs
 RIBBON_MAIN_CALIBER = 0
 RIBBON_TORPEDO = 1
 RIBBON_BOMB = 2
@@ -33,29 +101,22 @@ RIBBON_SECONDARY_CALIBER = 13
 RIBBON_OVER_PENETRATION = 14
 RIBBON_PENETRATION = 15
 RIBBON_NO_PENETRATION = 16
+RIBBON_RICOCHET = 17
 RIBBON_BUILDING_KILL = 18
 RIBBON_DETECTED = 19
+RIBBON_ASSIST = 54
 
-RIBBON_NAMES: dict[int, str] = {
-    RIBBON_MAIN_CALIBER: "Main Battery Hit",
-    RIBBON_TORPEDO: "Torpedo Hit",
-    RIBBON_BOMB: "Bomb Hit",
-    RIBBON_PLANE: "Plane Shot Down",
-    RIBBON_CRIT: "Critical Hit",
-    RIBBON_FRAG: "Destroyed",
-    RIBBON_BURN: "Set on Fire",
-    RIBBON_FLOOD: "Caused Flooding",
-    RIBBON_CITADEL: "Citadel Hit",
-    RIBBON_BASE_DEFENSE: "Base Defense",
-    RIBBON_BASE_CAPTURE: "Base Capture",
-    RIBBON_BASE_CAPTURE_ASSIST: "Capture Assist",
-    RIBBON_SUPPRESSED: "Suppressed",
-    RIBBON_SECONDARY_CALIBER: "Secondary Hit",
-    RIBBON_OVER_PENETRATION: "Over-penetration",
-    RIBBON_PENETRATION: "Penetration",
-    RIBBON_NO_PENETRATION: "Non-penetration",
-    RIBBON_BUILDING_KILL: "Building Destroyed",
-    RIBBON_DETECTED: "Detected",
+RIBBON_NAMES: dict[int, str] = {v: k for k, v in RIBBON_WIRE_IDS.items()}
+# Also keep the old friendly names for display
+RIBBON_DISPLAY_NAMES: dict[int, str] = {
+    0: "Main Battery Hit", 1: "Torpedo Hit", 2: "Bomb Hit",
+    3: "Plane Shot Down", 4: "Critical Hit", 5: "Destroyed",
+    6: "Set on Fire", 7: "Caused Flooding", 8: "Citadel Hit",
+    9: "Base Defense", 10: "Base Capture", 11: "Capture Assist",
+    12: "Suppressed", 13: "Secondary Hit",
+    14: "Over-penetration", 15: "Penetration",
+    16: "Non-penetration", 17: "Ricochet",
+    18: "Building Destroyed", 19: "Detected", 54: "Assist",
 }
 
 # HIT_TYPE values → ribbon mapping (simplified)
@@ -136,3 +197,88 @@ def derive_ribbons(events: list[GameEvent]) -> list[RibbonEvent]:
                 ))
 
     return ribbons
+
+
+def extract_recording_player_ribbons(
+    history: list,
+    avatar_entity_id: int,
+) -> list[RibbonEvent]:
+    """Extract server-authoritative ribbons for the recording player.
+
+    Diffs consecutive privateVehicleState.ribbons cumulative snapshots
+    to produce individual RibbonEvents with exact timestamps.
+
+    Only works for the recording player (OWN_CLIENT property).
+    For other players, use derive_ribbons() instead.
+
+    Args:
+        history: The tracker's _history list (list of PropertyChange).
+        avatar_entity_id: The recording player's Avatar entity ID.
+
+    Returns:
+        Chronological list of RibbonEvents (derived=False).
+    """
+    events: list[RibbonEvent] = []
+    prev_counts: dict[int, int] = {}
+
+    for change in history:
+        if (
+            change.entity_id != avatar_entity_id
+            or change.property_name != "privateVehicleState"
+        ):
+            continue
+
+        pvs = change.new_value
+        if not isinstance(pvs, dict):
+            continue
+
+        ribbons_raw = pvs.get("ribbons")
+        if ribbons_raw is None:
+            continue
+
+        # Handle both list and dict formats
+        entries: list[Any]
+        if isinstance(ribbons_raw, dict):
+            entries = list(ribbons_raw.values())
+        elif isinstance(ribbons_raw, list):
+            entries = ribbons_raw
+        else:
+            continue
+
+        curr_counts: dict[int, int] = {}
+        for entry in entries:
+            if entry is None:
+                continue
+            rid = (
+                entry.get("ribbonId")
+                if isinstance(entry, dict)
+                else getattr(entry, "ribbonId", None)
+            )
+            cnt = (
+                entry.get("count")
+                if isinstance(entry, dict)
+                else getattr(entry, "count", None)
+            )
+            if rid is not None and cnt is not None:
+                curr_counts[int(rid)] = int(cnt)
+
+        # Diff against previous snapshot to find new ribbons
+        for rid, cnt in curr_counts.items():
+            prev = prev_counts.get(rid, 0)
+            delta = cnt - prev
+            if delta > 0:
+                name = RIBBON_WIRE_IDS.get(rid, f"UNKNOWN_{rid}")
+                for _ in range(delta):
+                    events.append(RibbonEvent(
+                        timestamp=change.timestamp,
+                        entity_id=avatar_entity_id,
+                        ribbon_id=rid,
+                        ribbon_name=name,
+                        vehicle_id=avatar_entity_id,
+                        target_id=0,
+                        derived=False,
+                    ))
+
+        prev_counts = curr_counts
+
+    return events

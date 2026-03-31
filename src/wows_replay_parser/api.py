@@ -67,6 +67,30 @@ class ParsedReplay:
         """
         return self._tracker.iter_states(timestamps)
 
+    def recording_player_ribbons(self) -> list[GameEvent]:
+        """Get server-authoritative ribbons for the recording player.
+
+        Extracts from privateVehicleState.ribbons (OWN_CLIENT property).
+        Each RibbonEvent has the exact timestamp and ribbon_id.
+        derived=False indicates these are server-authoritative, not guesses.
+
+        For other players' ribbons, use derive_ribbons() with self.events.
+        """
+        from wows_replay_parser.ribbons import extract_recording_player_ribbons
+
+        # Find Avatar entity ID
+        avatar_eid = None
+        for eid, etype in self._tracker._entity_types.items():
+            if etype == "Avatar":
+                avatar_eid = eid
+                break
+        if avatar_eid is None:
+            return []
+
+        return extract_recording_player_ribbons(
+            self._tracker._history, avatar_eid,
+        )
+
     def events_of_type(self, cls: type[_T]) -> list[_T]:
         """Filter events by type."""
         return [e for e in self.events if isinstance(e, cls)]

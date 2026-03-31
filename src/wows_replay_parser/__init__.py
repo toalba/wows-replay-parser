@@ -8,6 +8,12 @@ No hardcoded schemas, no manual updates per patch.
 __version__ = "0.1.0"
 
 from wows_replay_parser.api import ParsedReplay, parse_replay
+from wows_replay_parser.ribbons import RIBBON_WIRE_IDS, extract_recording_player_ribbons
 from wows_replay_parser.ship_config import ShipConfig, parse_ship_config
 
-__all__ = ["ParsedReplay", "parse_replay", "ShipConfig", "parse_ship_config", "__version__"]
+__all__ = [
+    "ParsedReplay", "parse_replay",
+    "ShipConfig", "parse_ship_config",
+    "RIBBON_WIRE_IDS", "extract_recording_player_ribbons",
+    "__version__",
+]
