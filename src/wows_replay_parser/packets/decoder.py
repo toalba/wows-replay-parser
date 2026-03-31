@@ -15,6 +15,7 @@ Entity type resolution:
 
 from __future__ import annotations
 
+import functools
 import logging
 import struct
 from io import BytesIO
@@ -23,6 +24,11 @@ from typing import TYPE_CHECKING, Any
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry
 from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 from wows_replay_parser.gamedata.schema_builder import SchemaBuilder
+from wows_replay_parser.packets.nested_property import (
+    BitReader,
+    _bits_for_count,
+    _resolve_type_structure,
+)
 from wows_replay_parser.packets.types import Packet, PacketType
 
 if TYPE_CHECKING:
@@ -561,7 +567,6 @@ class PacketDecoder:
             return
 
         # Read the property index from the bit stream
-        from wows_replay_parser.packets.nested_property import BitReader, _bits_for_count
 
         entity = self._entities.get(entity_type)
         if entity is None:
@@ -611,10 +616,20 @@ class PacketDecoder:
             return
 
         # cont == 1: descend into nested structure
+        is_slice = is_slice_byte & 1 == 1
+        _spec_info = None  # (array_path, candidate_len) from speculation
         result = self._parse_nested_update(
             entity_type, prop_idx, prop_def.name,
-            bit_payload, entity_id, is_slice_byte & 1 == 1,
+            bit_payload, entity_id, is_slice,
         )
+        if result is None:
+            # Speculative: array length may be wrong — try incrementing
+            spec_result = self._speculative_nested_decode(
+                entity_type, prop_idx, prop_def.name,
+                bit_payload, entity_id, is_slice,
+            )
+            if spec_result is not None:
+                result, _spec_info = spec_result
         if result is not None:
             path, field_name, value = result
             packet.property_name = prop_def.name
@@ -688,6 +703,55 @@ class PacketDecoder:
                         target[field_name] = value
                         packet.property_value = current
 
+                # After apply: if this was a speculative decode, grow the
+                # tracked array to the inferred min length. We do this AFTER
+                # apply so the intermediate dicts + array exist in _current.
+                if _spec_info is not None:
+                    arr_path, _candidate_len = _spec_info
+                    # Infer min array length from the decoded indices
+                    # and grow the tracked array so subsequent packets
+                    # use the correct arr_len in the normal path.
+                    min_len = self._infer_min_array_len(result)
+                    if min_len > 0:
+                        self._grow_tracked_array(
+                            entity_id, prop_def.name, arr_path, min_len,
+                        )
+
+    @staticmethod
+    def _infer_min_array_len(
+        result: tuple[list[str], str, Any],
+    ) -> int:
+        """Infer minimum array length from a decoded nested update result.
+
+        For SetRange: __slice__idx1__idx2 → array had at least max(idx1,idx2) elements
+        For SetElement: field_name is str(index) → array had at least index+1 elements
+        For descent: path contains str(elem_idx) → array had at least elem_idx+1 elements
+        """
+        path, field_name, _ = result
+
+        # Check field_name for slice marker
+        if field_name.startswith("__slice__"):
+            parts = field_name.split("__")
+            try:
+                idx1, idx2 = int(parts[2]), int(parts[3])
+                # After slice[idx1:idx2] = [value], new len = old_len - (idx2-idx1) + 1
+                # But the server's arr_len at encode time was >= max(idx1, idx2)
+                # For an append: idx1 == idx2 == old_arr_len, so min = idx1 + 1
+                return max(idx1, idx2) + 1
+            except (IndexError, ValueError):
+                pass
+
+        # Check field_name for numeric element index
+        if field_name.isdigit():
+            return int(field_name) + 1
+
+        # Check path for numeric segments (descent into array element)
+        for segment in reversed(path):
+            if segment.isdigit():
+                return int(segment) + 1
+
+        return 0
+
     def _parse_nested_update(
         self,
         entity_type: str,
@@ -696,11 +760,9 @@ class PacketDecoder:
         bit_payload: bytes,
         entity_id: int,
         is_slice: bool,
+        arr_len_overrides: dict[tuple[str, ...], int] | None = None,
     ) -> tuple[list[str], str, Any] | None:
         """Parse a nested property update from the bit payload."""
-        from wows_replay_parser.packets.nested_property import (
-            BitReader, _bits_for_count, _resolve_type_structure,
-        )
 
         entity = self._entities.get(entity_type)
         if entity is None:
@@ -726,7 +788,10 @@ class PacketDecoder:
         reader.read_bits(_bits_for_count(num_props))
 
         # Now navigate the nested structure
-        return self._navigate_nested(reader, is_slice, type_info, entity_id, prop_name, path, aliases)
+        return self._navigate_nested(
+            reader, is_slice, type_info, entity_id, prop_name, path, aliases,
+            arr_len_overrides=arr_len_overrides,
+        )
 
     def _navigate_nested(
         self,
@@ -737,9 +802,9 @@ class PacketDecoder:
         prop_name: str,
         path: list[str],
         aliases: AliasRegistry,
+        arr_len_overrides: dict[tuple[str, ...], int] | None = None,
     ) -> tuple[list[str], str, Any] | None:
         """Recursively navigate nested structure and return (path, field, value)."""
-        from wows_replay_parser.packets.nested_property import _bits_for_count, _resolve_type_structure
 
         cont = reader.read_bits(1)
         kind = type_info.get("kind")
@@ -766,18 +831,12 @@ class PacketDecoder:
                     return None
 
             elif kind == "array":
-                # Array update — get current array from tracker
-                current = None
-                if self._tracker:
-                    entity_props = self._tracker._current.get(entity_id, {})
-                    current = entity_props.get(prop_name)
-                    for key in path:
-                        if isinstance(current, dict):
-                            current = current.get(key)
-                        else:
-                            current = None
-                            break
-                arr_len = len(current) if isinstance(current, (list, tuple)) else 0
+                # Array update — resolve array length
+                path_key = tuple(path)
+                if arr_len_overrides and path_key in arr_len_overrides:
+                    arr_len = arr_len_overrides[path_key]
+                else:
+                    arr_len = self._get_tracked_arr_len(entity_id, prop_name, path_key)
 
                 if is_slice:
                     # SetRange: idx1..idx2 replaced with new values
@@ -831,20 +890,15 @@ class PacketDecoder:
             return self._navigate_nested(
                 reader, is_slice, child_type, entity_id, prop_name,
                 path + [field_name], aliases,
+                arr_len_overrides=arr_len_overrides,
             )
 
         elif kind == "array":
-            current = None
-            if self._tracker:
-                entity_props = self._tracker._current.get(entity_id, {})
-                current = entity_props.get(prop_name)
-                for key in path:
-                    if isinstance(current, dict):
-                        current = current.get(key)
-                    else:
-                        current = None
-                        break
-            arr_len = len(current) if isinstance(current, (list, tuple)) else 0
+            path_key = tuple(path)
+            if arr_len_overrides and path_key in arr_len_overrides:
+                arr_len = arr_len_overrides[path_key]
+            else:
+                arr_len = self._get_tracked_arr_len(entity_id, prop_name, path_key)
             bits = _bits_for_count(max(arr_len, 1))
             elem_idx = reader.read_bits(bits)
             elem_type = type_info.get("element_type", "BLOB")
@@ -854,9 +908,141 @@ class PacketDecoder:
             return self._navigate_nested(
                 reader, is_slice, child_type, entity_id, prop_name,
                 path + [str(elem_idx)], aliases,
+                arr_len_overrides=arr_len_overrides,
             )
 
         return None
+
+    def _collect_array_paths(
+        self,
+        type_info: dict[str, Any],
+        prefix: tuple[str, ...],
+        aliases: AliasRegistry,
+        result: list[tuple[str, ...]],
+    ) -> None:
+        """Recursively collect paths to ARRAY types within a type structure."""
+
+        kind = type_info.get("kind")
+        if kind == "array":
+            result.append(prefix)
+        elif kind == "dict":
+            for field_name, field_type in type_info["fields"]:
+                child = _resolve_type_structure(field_type, aliases)
+                if child:
+                    self._collect_array_paths(child, prefix + (field_name,), aliases, result)
+
+    @functools.lru_cache(maxsize=256)
+    def _find_array_paths(
+        self, entity_type: str, prop_idx: int,
+    ) -> list[tuple[str, ...]]:
+        """Return all path tuples that lead to ARRAY types in this property."""
+
+        prop_def = self._entities.get_client_property(entity_type, prop_idx)
+        if prop_def is None:
+            return []
+        aliases = self._schema._aliases
+        type_info = _resolve_type_structure(prop_def.type_name, aliases)
+        if type_info is None:
+            return []
+        paths: list[tuple[str, ...]] = []
+        self._collect_array_paths(type_info, (), aliases, paths)
+        return paths
+
+    def _get_tracked_arr_len(
+        self, entity_id: int, prop_name: str, array_path: tuple[str, ...],
+    ) -> int:
+        """Get the current tracked array length for a nested array path."""
+        if not self._tracker:
+            return 0
+        current = self._tracker._current.get(entity_id, {}).get(prop_name)
+        for key in array_path:
+            if isinstance(current, dict):
+                current = current.get(key)
+            else:
+                return 0
+        if isinstance(current, (list, tuple)):
+            return len(current)
+        return 0
+
+    def _speculative_nested_decode(
+        self,
+        entity_type: str,
+        prop_idx: int,
+        prop_name: str,
+        bit_payload: bytes,
+        entity_id: int,
+        is_slice: bool,
+    ) -> tuple[tuple[list[str], str, Any], tuple[tuple[str, ...], int]] | None:
+        """Try decoding with progressively larger array lengths.
+
+        Returns (result, (array_path, candidate_len)) on success, None on failure.
+        The caller is responsible for growing the tracked array AFTER applying
+        the result to _current (so the intermediate structure exists).
+        """
+        from wows_replay_parser.packets.nested_property import _bits_for_count
+
+        array_paths = self._find_array_paths(entity_type, prop_idx)
+        if not array_paths:
+            return None
+
+        # _bits_for_count is a step function. Try ONE representative per
+        # bracket, starting from the next bracket above base_len.
+        # Stop at 512 — arrays larger than that are extremely rare and
+        # high-bracket false positives are dangerous (they corrupt state).
+        bracket_representatives = [2, 3, 5, 9, 17, 33, 65, 129, 257, 513]
+
+        for array_path in array_paths:
+            base_len = self._get_tracked_arr_len(entity_id, prop_name, array_path)
+            base_bits = _bits_for_count(max(base_len + 1 if is_slice else base_len, 1))
+
+            for candidate_len in bracket_representatives:
+                if candidate_len <= base_len:
+                    continue
+                candidate_bits = _bits_for_count(
+                    max(candidate_len + 1 if is_slice else candidate_len, 1),
+                )
+                if candidate_bits == base_bits:
+                    continue  # same bit count, won't help
+
+                overrides = {array_path: candidate_len}
+                result = self._parse_nested_update(
+                    entity_type, prop_idx, prop_name,
+                    bit_payload, entity_id, is_slice,
+                    arr_len_overrides=overrides,
+                )
+                if result is not None:
+                    return (result, (array_path, candidate_len))
+
+        return None
+
+    def _grow_tracked_array(
+        self,
+        entity_id: int,
+        prop_name: str,
+        array_path: tuple[str, ...],
+        target_len: int,
+    ) -> None:
+        """Grow an existing tracked array to target_len by appending None.
+
+        Only operates on arrays that already exist in _current.
+        Does NOT create intermediate dict structure — that would corrupt
+        state for subsequent normal-path decodes.
+        """
+        if not self._tracker:
+            return
+        current = self._tracker._current.get(entity_id, {}).get(prop_name)
+        if current is None:
+            return
+        # Navigate the path — bail if any step is missing
+        target = current
+        for key in array_path:
+            if isinstance(target, dict) and key in target:
+                target = target[key]
+            else:
+                return  # path doesn't exist yet, don't create it
+        if isinstance(target, list):
+            while len(target) < target_len:
+                target.append(None)
 
     def _handle_non_volatile_position(self, packet: Packet) -> None:
         """
