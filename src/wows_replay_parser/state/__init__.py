@@ -1,6 +1,7 @@
 """Entity state tracking over time."""
 
 from .models import (
+    AircraftState,
     BattleState,
     CapturePointState,
     GameState,
@@ -10,6 +11,7 @@ from .models import (
 from .tracker import GameStateTracker
 
 __all__ = [
+    "AircraftState",
     "BattleState",
     "CapturePointState",
     "GameState",

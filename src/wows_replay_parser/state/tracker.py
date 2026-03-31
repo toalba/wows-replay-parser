@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import math
 from bisect import bisect_left, bisect_right
 from typing import TYPE_CHECKING, Any
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
 from wows_replay_parser.packets.types import Packet, PacketType
 
 from .models import (
+    AircraftState,
     BattleState,
     CapturePointState,
     GameState,
@@ -77,6 +79,8 @@ class GameStateTracker:
         self._consumable_activations: dict[int, list[tuple[float, int, float]]] = {}
         # Consumable ID → slot index mapping per entity (from setConsumables pickle)
         self._consumable_id_to_slot: dict[int, dict[int, int]] = {}
+        # Aircraft/squadron log: (timestamp, plane_id, state) — None state = removed
+        self._aircraft_log: list[tuple[float, int, AircraftState | None]] = []
         # Camera state per tick
         self._camera_positions: list[tuple[float, tuple[float, float, float]]] = []
         # Server timestamp (absolute time from ServerTimestamp packet)
@@ -296,6 +300,61 @@ class GameStateTracker:
                 self._history_timestamps.append(change.timestamp)
                 changes.append(change)
 
+            # Squadron tracking
+            elif packet.method_name == "receive_addMinimapSquadron" and packet.method_args:
+                args = packet.method_args
+                plane_id = int(self._get_arg(args, 0) or 0)
+                pos = self._get_arg(args, 3) or {}
+                self._aircraft_log.append((packet.timestamp, plane_id, AircraftState(
+                    plane_id=plane_id,
+                    squadron_type="controllable",
+                    team_id=int(self._get_arg(args, 1) or 0),
+                    params_id=int(self._get_arg(args, 2) or 0),
+                    x=float(pos.get("x", 0)) if isinstance(pos, dict) else 0.0,
+                    z=float(pos.get("y", 0)) if isinstance(pos, dict) else 0.0,
+                )))
+
+            elif packet.method_name == "receive_updateMinimapSquadron" and packet.method_args:
+                args = packet.method_args
+                plane_id = int(self._get_arg(args, 0) or 0)
+                pos = self._get_arg(args, 1) or {}
+                current = self._aircraft_latest(plane_id)
+                if current is not None:
+                    updated = dataclasses.replace(
+                        current,
+                        x=float(pos.get("x", 0)) if isinstance(pos, dict) else current.x,
+                        z=float(pos.get("y", 0)) if isinstance(pos, dict) else current.z,
+                    )
+                    self._aircraft_log.append((packet.timestamp, plane_id, updated))
+
+            elif packet.method_name in (
+                "receive_removeMinimapSquadron", "receive_removeSquadron",
+            ) and packet.method_args:
+                plane_id = int(self._get_arg(packet.method_args, 0) or 0)
+                self._aircraft_log.append((packet.timestamp, plane_id, None))
+
+            elif packet.method_name == "receive_deactivateSquadron" and packet.method_args:
+                plane_id = int(self._get_arg(packet.method_args, 0) or 0)
+                current = self._aircraft_latest(plane_id)
+                if current is not None:
+                    self._aircraft_log.append((packet.timestamp, plane_id,
+                        dataclasses.replace(current, is_active=False)))
+
+            elif packet.method_name == "activateAirSupport" and packet.method_args:
+                args = packet.method_args
+                plane_id = int(args.get("squadronID", 0))
+                pos = args.get("position") or {}
+                self._aircraft_log.append((packet.timestamp, plane_id, AircraftState(
+                    plane_id=plane_id,
+                    squadron_type="airstrike",
+                    x=float(pos.get("x", 0)) if isinstance(pos, dict) else 0.0,
+                    z=float(pos.get("z", 0)) if isinstance(pos, dict) else 0.0,
+                )))
+
+            elif packet.method_name == "deactivateAirSupport" and packet.method_args:
+                plane_id = int(packet.method_args.get("squadronID", 0))
+                self._aircraft_log.append((packet.timestamp, plane_id, None))
+
         return changes
 
     def state_at(self, t: float) -> GameState:
@@ -326,7 +385,10 @@ class GameStateTracker:
             if cap_points:
                 battle.capture_points = cap_points
 
-        return GameState(timestamp=t, ships=ships, battle=battle)
+        return GameState(
+            timestamp=t, ships=ships, battle=battle,
+            aircraft=self._build_aircraft_at(t),
+        )
 
     def iter_states(
         self, timestamps: list[float],
@@ -381,6 +443,10 @@ class GameStateTracker:
         mm_cursors: dict[int, int] = {}
         mm_cache: dict[int, tuple[float, float, float, bool]] = {}
         mm_time_cache: dict[int, float] = {}
+
+        # Aircraft cursor
+        aircraft_cursor = 0
+        running_aircraft: dict[int, AircraftState] = {}
 
         for t in timestamps:
             # Apply property changes up to time t
@@ -520,8 +586,21 @@ class GameStateTracker:
                 if cap_points:
                     battle.capture_points = cap_points
 
+            # Advance aircraft cursor
+            while (
+                aircraft_cursor < len(self._aircraft_log)
+                and self._aircraft_log[aircraft_cursor][0] <= t
+            ):
+                _, plane_id, ac_state = self._aircraft_log[aircraft_cursor]
+                if ac_state is None:
+                    running_aircraft.pop(plane_id, None)
+                else:
+                    running_aircraft[plane_id] = ac_state
+                aircraft_cursor += 1
+
             yield GameState(
                 timestamp=t, ships=ships, battle=battle,
+                aircraft=dict(running_aircraft),
             )
 
     def ship_state(self, entity_id: int, t: float) -> ShipState:
@@ -1114,3 +1193,22 @@ class GameStateTracker:
         if index < len(keys):
             return args[keys[index]]
         return None
+
+    def _aircraft_latest(self, plane_id: int) -> AircraftState | None:
+        """Return the latest known state for a plane_id, or None if removed."""
+        for _, pid, state in reversed(self._aircraft_log):
+            if pid == plane_id:
+                return state  # None means removed
+        return None
+
+    def _build_aircraft_at(self, t: float) -> dict[int, AircraftState]:
+        """Rebuild aircraft dict up to timestamp t."""
+        result: dict[int, AircraftState] = {}
+        for ts, plane_id, state in self._aircraft_log:
+            if ts > t:
+                break
+            if state is None:
+                result.pop(plane_id, None)
+            else:
+                result[plane_id] = state
+        return result

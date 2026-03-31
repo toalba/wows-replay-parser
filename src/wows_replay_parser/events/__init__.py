@@ -4,6 +4,7 @@ Typed event stream — transforms raw decoded packets into semantic game events.
 
 from wows_replay_parser.events.models import (
     AchievementEvent,
+    AirSupportEvent,
     CapContestEvent,
     CapturePointUpdateEvent,
     ChatEvent,
@@ -22,12 +23,14 @@ from wows_replay_parser.events.models import (
     ShotCreatedEvent,
     ShotDestroyedEvent,
     ShotEvent,
+    SquadronEvent,
     TorpedoCreatedEvent,
 )
 from wows_replay_parser.events.stream import EventStream
 
 __all__ = [
     "AchievementEvent",
+    "AirSupportEvent",
     "CapContestEvent",
     "CapturePointUpdateEvent",
     "ChatEvent",
@@ -47,5 +50,6 @@ __all__ = [
     "ShotCreatedEvent",
     "ShotDestroyedEvent",
     "ShotEvent",
+    "SquadronEvent",
     "TorpedoCreatedEvent",
 ]

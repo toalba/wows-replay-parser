@@ -99,9 +99,24 @@ class BattleState:
 
 
 @dataclass
+class AircraftState:
+    """Snapshot of a squadron/airstrike on the minimap."""
+
+    plane_id: int  # PLANE_ID (INT64), dict key
+    squadron_type: str  # "controllable" | "airstrike"
+    team_id: int = 0
+    params_id: int = 0  # GAMEPARAMS_ID (for icon lookup)
+    x: float = 0.0  # world x
+    z: float = 0.0  # world z
+    is_active: bool = True
+    num_planes: int = 0  # from SQUADRON_STATE.numPlanes (0 if unknown)
+
+
+@dataclass
 class GameState:
     """Full game state snapshot at a point in time."""
 
     timestamp: float
     ships: dict[int, ShipState] = field(default_factory=dict)
     battle: BattleState = field(default_factory=BattleState)
+    aircraft: dict[int, AircraftState] = field(default_factory=dict)

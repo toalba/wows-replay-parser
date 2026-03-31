@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
 from wows_replay_parser.events.models import (
     AchievementEvent,
+    AirSupportEvent,
     CapContestEvent,
     CapturePointUpdateEvent,
     ChatEvent,
@@ -34,6 +35,7 @@ from wows_replay_parser.events.models import (
     ScoutingDamageEvent,
     ShotCreatedEvent,
     ShotDestroyedEvent,
+    SquadronEvent,
     TorpedoCreatedEvent,
 )
 from wows_replay_parser.packets.types import Packet, PacketType
@@ -443,6 +445,80 @@ def _achievement(pkt: Packet) -> AchievementEvent:
     )
 
 
+def _squadron_add(pkt: Packet) -> SquadronEvent:
+    """receive_addMinimapSquadron(plane_id, team, params_id, pos, bool)."""
+    args = pkt.method_args or {}
+    pos = _get(args, "arg3", {})
+    return SquadronEvent(
+        timestamp=pkt.timestamp, entity_id=pkt.entity_id,
+        plane_id=int(_get(args, "arg0", 0)),
+        team_id=int(_get(args, "arg1", 0)),
+        params_id=int(_get(args, "arg2", 0)),
+        x=float(pos.get("x", 0)) if isinstance(pos, dict) else 0.0,
+        z=float(pos.get("y", 0)) if isinstance(pos, dict) else 0.0,
+        action="add", raw_data=args,
+    )
+
+
+def _squadron_update(pkt: Packet) -> SquadronEvent:
+    """receive_updateMinimapSquadron(plane_id, pos)."""
+    args = pkt.method_args or {}
+    pos = _get(args, "arg1", {})
+    return SquadronEvent(
+        timestamp=pkt.timestamp, entity_id=pkt.entity_id,
+        plane_id=int(_get(args, "arg0", 0)),
+        x=float(pos.get("x", 0)) if isinstance(pos, dict) else 0.0,
+        z=float(pos.get("y", 0)) if isinstance(pos, dict) else 0.0,
+        action="update", raw_data=args,
+    )
+
+
+def _squadron_remove(pkt: Packet) -> SquadronEvent:
+    """receive_removeMinimapSquadron / receive_removeSquadron."""
+    args = pkt.method_args or {}
+    return SquadronEvent(
+        timestamp=pkt.timestamp, entity_id=pkt.entity_id,
+        plane_id=int(_get(args, "arg0", 0)),
+        action="remove", raw_data=args,
+    )
+
+
+def _squadron_deactivate(pkt: Packet) -> SquadronEvent:
+    """receive_deactivateSquadron(plane_id, reason)."""
+    args = pkt.method_args or {}
+    return SquadronEvent(
+        timestamp=pkt.timestamp, entity_id=pkt.entity_id,
+        plane_id=int(_get(args, "arg0", 0)),
+        action="deactivate", raw_data=args,
+    )
+
+
+def _air_support_activate(pkt: Packet) -> AirSupportEvent:
+    """activateAirSupport(index, squadronID, position, aimLength, airSupportShotID)."""
+    args = pkt.method_args or {}
+    pos = args.get("position") or {}
+    return AirSupportEvent(
+        timestamp=pkt.timestamp, entity_id=pkt.entity_id,
+        index=int(args.get("index", 0)),
+        plane_id=int(args.get("squadronID", 0)),
+        x=float(pos.get("x", 0)) if isinstance(pos, dict) else 0.0,
+        z=float(pos.get("z", 0)) if isinstance(pos, dict) else 0.0,
+        aim_length=float(args.get("aimLength", 0.0)),
+        action="activate", raw_data=args,
+    )
+
+
+def _air_support_deactivate(pkt: Packet) -> AirSupportEvent:
+    """deactivateAirSupport(index, squadronID)."""
+    args = pkt.method_args or {}
+    return AirSupportEvent(
+        timestamp=pkt.timestamp, entity_id=pkt.entity_id,
+        index=int(args.get("index", 0)),
+        plane_id=int(args.get("squadronID", 0)),
+        action="deactivate", raw_data=args,
+    )
+
+
 # Method name → factory function
 _METHOD_FACTORIES: dict[str, Callable[[Packet], GameEvent | list[GameEvent]]] = {
     "receiveVehicleDeath": _death_from_receive_vehicle_death,
@@ -460,6 +536,15 @@ _METHOD_FACTORIES: dict[str, Callable[[Packet], GameEvent | list[GameEvent]]] = 
     # Stats events — matched if the method exists in the .def files
     "receiveDamageStat": _potential_damage,
     "receive_CommonCMD": _generic(RawEvent),
+    # Squadrons
+    "receive_addMinimapSquadron": _squadron_add,
+    "receive_updateMinimapSquadron": _squadron_update,
+    "receive_removeMinimapSquadron": _squadron_remove,
+    "receive_removeSquadron": _squadron_remove,
+    "receive_deactivateSquadron": _squadron_deactivate,
+    # Air support
+    "activateAirSupport": _air_support_activate,
+    "deactivateAirSupport": _air_support_deactivate,
 }
 
 

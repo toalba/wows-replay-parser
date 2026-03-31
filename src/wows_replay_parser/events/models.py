@@ -259,6 +259,31 @@ class MinimapVisionEvent(GameEvent):
 
 
 @dataclass
+class SquadronEvent(GameEvent):
+    """CV squadron added/updated/removed on the minimap."""
+
+    plane_id: int = 0
+    params_id: int = 0
+    team_id: int = 0
+    x: float = 0.0
+    z: float = 0.0
+    num_planes: int = 0
+    action: str = ""  # "add" | "update" | "remove" | "deactivate"
+
+
+@dataclass
+class AirSupportEvent(GameEvent):
+    """Airstrike drop zone activated or deactivated."""
+
+    plane_id: int = 0
+    index: int = 0
+    x: float = 0.0
+    z: float = 0.0
+    aim_length: float = 0.0
+    action: str = ""  # "activate" | "deactivate"
+
+
+@dataclass
 class RibbonEvent(GameEvent):
     """Derived ribbon (P2). Inferred from hit events."""
 
