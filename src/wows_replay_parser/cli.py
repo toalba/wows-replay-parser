@@ -6,6 +6,7 @@ Usage:
     wowsreplay parse replay.wowsreplay --gamedata ./path/to/entity_defs
     wowsreplay events replay.wowsreplay --gamedata ./path/to/entity_defs
     wowsreplay state replay.wowsreplay --gamedata ./path/to/entity_defs --time 120.5
+    wowsreplay export replay.wowsreplay --gamedata ./path/to/entity_defs -o replay.json
 """
 
 from __future__ import annotations
@@ -175,5 +176,133 @@ def main() -> None:
         console.print()
         console.print("[bold]Battle:[/]")
         pprint(game_state.battle)
+
+    @cli.command()
+    @click.argument("replay_path", type=click.Path(exists=True))
+    @click.option(
+        "--gamedata", required=True, type=click.Path(exists=True),
+        help="Path to wows-gamedata entity_defs directory",
+    )
+    @click.option(
+        "-o", "--output", default=None, type=click.Path(),
+        help="Output JSON file (default: stdout)",
+    )
+    @click.option(
+        "--no-positions", is_flag=True,
+        help="Exclude PositionEvent (reduces output ~5x)",
+    )
+    @click.option(
+        "--no-properties", is_flag=True,
+        help="Exclude PropertyUpdateEvent",
+    )
+    @click.option(
+        "--no-raw", is_flag=True,
+        help="Exclude RawEvent (unmatched methods)",
+    )
+    @click.option("--pretty", is_flag=True, help="Pretty-print JSON")
+    def export(
+        replay_path: str,
+        gamedata: str,
+        output: str | None,
+        no_positions: bool,
+        no_properties: bool,
+        no_raw: bool,
+        pretty: bool,
+    ) -> None:
+        """Export replay to structured JSON."""
+        import dataclasses
+        import json
+        import sys
+        from pathlib import Path
+
+        from wows_replay_parser.api import parse_replay
+
+        result = parse_replay(Path(replay_path), Path(gamedata))
+
+        def _make_serializable(obj: object) -> object:
+            """Recursively convert an object to JSON-safe types."""
+            if obj is None or isinstance(obj, (bool, int, float, str)):
+                return obj
+            if isinstance(obj, bytes):
+                if len(obj) == 0:
+                    return None
+                return f"<{len(obj)} bytes>"
+            if isinstance(obj, dict):
+                return {
+                    (str(k) if isinstance(k, tuple) else k): _make_serializable(v)
+                    for k, v in obj.items()
+                    if not (isinstance(k, str) and k.startswith("_"))
+                }
+            if isinstance(obj, (list, tuple)):
+                return [_make_serializable(v) for v in obj]
+            if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+                return {
+                    f.name: _make_serializable(getattr(obj, f.name))
+                    for f in dataclasses.fields(obj)
+                }
+            # _AttrObject or other pickle-reconstructed objects
+            if hasattr(obj, "__dict__"):
+                d = {
+                    k: _make_serializable(v)
+                    for k, v in obj.__dict__.items()
+                    if not k.startswith("_")
+                }
+                d["__class__"] = type(obj).__name__
+                return d
+            # Container (construct library)
+            if hasattr(obj, "items"):
+                return {
+                    str(k): _make_serializable(v) for k, v in obj.items()
+                    if not str(k).startswith("_")
+                }
+            return str(obj)
+
+        # Filter events
+        skip_types: set[str] = set()
+        if no_positions:
+            skip_types.add("PositionEvent")
+        if no_properties:
+            skip_types.add("PropertyUpdateEvent")
+        if no_raw:
+            skip_types.add("RawEvent")
+
+        events_out = []
+        for ev in result.events:
+            etype = type(ev).__name__
+            if etype in skip_types:
+                continue
+            d = _make_serializable(ev)
+            if isinstance(d, dict):
+                d["event_type"] = etype
+                d.pop("raw_data", None)
+            events_out.append(d)
+
+        # Players
+        players_out = _make_serializable(result.players)
+
+        # Build output
+        doc = {
+            "meta": {
+                "map": result.map_name,
+                "version": result.game_version,
+                "duration": round(result.duration, 2),
+                "player_count": len(result.players),
+            },
+            "players": players_out,
+            "events": events_out,
+        }
+
+        indent = 2 if pretty else None
+        json_str = json.dumps(doc, indent=indent, ensure_ascii=False)
+
+        if output:
+            Path(output).write_text(json_str, encoding="utf-8")
+            click.echo(
+                f"Exported {len(events_out)} events, "
+                f"{len(result.players)} players -> {output}"
+            )
+        else:
+            sys.stdout.write(json_str)
+            sys.stdout.write("\n")
 
     cli()
