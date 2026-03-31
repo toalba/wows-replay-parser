@@ -193,10 +193,90 @@ def decode_gameparams(data: bytes) -> Any:
     return struct.unpack_from("<I", data)[0]
 
 
+def decode_ship_config(data: bytes) -> Any:
+    """SHIP_CONFIG: binary ship loadout blob.
+
+    Format (all u32 LE, count-prefixed arrays of GameParamIds):
+      Header: version + ship_params_id + element_count
+      Units: 14 fixed slots (hull, engine, fire_control, etc.)
+      [v13.2+: extra u32]
+      Modernization: upgrades (slot 1-6)
+      Exteriors: signals, camos, flags
+      SupplyState: u32
+      ColorSchemes: (slot, scheme) pairs
+      Abilities: consumable GameParamIds
+      Ensigns: ensign items
+      Ecoboosts: economic boosts
+      NavalFlag: u32
+      IsOwned: u32
+      LastBoardedCrew: commander/captain GameParamId
+
+    Reference: wows-toolkit/crates/wowsunpack/src/data/ship_config.rs
+    """
+    if len(data) < 12:
+        return data
+
+    off = [0]
+
+    def r32() -> int:
+        v = struct.unpack_from("<I", data, off[0])[0]
+        off[0] += 4
+        return v
+
+    def read_array() -> list[int]:
+        count = r32()
+        return [r32() for _ in range(count)]
+
+    try:
+        version = r32()
+        ship_params_id = r32()
+        _element_count = r32()
+
+        units = read_array()
+
+        # v13.2+ added an extra u32 after unit slots.
+        # All current replays (v13.2+) include this field.
+        _v13_2_extra = r32()
+
+        modernization = read_array()
+        exteriors = read_array()
+
+        _supply_state = r32()
+
+        color_scheme_count = r32()
+        color_schemes = [(r32(), r32()) for _ in range(color_scheme_count)]
+
+        abilities = read_array()
+        ensigns = read_array()
+        ecoboosts = read_array()
+
+        naval_flag = r32()
+        _is_owned = r32()
+        last_boarded_crew = r32()
+
+        return {
+            "ship_params_id": ship_params_id,
+            "units": units,
+            "hull": units[0] if units else 0,
+            "modernization": modernization,
+            "exteriors": exteriors,
+            "abilities": abilities,
+            "ensigns": ensigns,
+            "ecoboosts": ecoboosts,
+            "naval_flag": naval_flag,
+            "last_boarded_crew": last_boarded_crew,
+            "color_schemes": color_schemes,
+        }
+    except struct.error:
+        log.debug("Failed to decode SHIP_CONFIG (%d bytes)", len(data), exc_info=True)
+        return data
+
+
 _FIXED_STRUCT_DECODERS: dict[str, Any] = {
     "CONSUMABLE_USAGE_PARAMS": decode_consumable_usage_params,
     "GUN_DIRECTIONS": decode_gun_directions,
     "FLAT_VECTOR": decode_flat_vector,
     "NULLABLE_VECTOR3": decode_nullable_vector3,
     "GAMEPARAMS": decode_gameparams,
+    "SHIP_CONFIG": decode_ship_config,
 }
