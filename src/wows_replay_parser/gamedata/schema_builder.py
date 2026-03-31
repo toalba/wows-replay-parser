@@ -25,6 +25,7 @@ from typing import Any
 import construct as cs
 
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry, TypeAlias
+from wows_replay_parser.gamedata.blob_decoders import METHOD_BLOB_OVERRIDES, decode_blob
 from wows_replay_parser.gamedata.def_loader import MethodDef, PropertyDef
 from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 
@@ -76,6 +77,22 @@ class _AllowNone(cs.Construct):
         raise cs.SizeofError("AllowNone is variable size")
 
 
+class _DecodedBlob(cs.Construct):
+    """Wraps a BLOB construct and decodes the raw bytes at parse time."""
+
+    def __init__(self, subcon: cs.Construct, alias: TypeAlias) -> None:
+        super().__init__()
+        self.subcon = subcon
+        self.alias = alias
+
+    def _parse(self, stream: Any, context: Any, path: str) -> Any:
+        raw = self.subcon._parsereport(stream, context, path)
+        return decode_blob(self.alias, raw)
+
+    def _sizeof(self, context: Any, path: str) -> int:
+        raise cs.SizeofError("DecodedBlob is variable size")
+
+
 # ── Primitive type maps ────────────────────────────────────────────
 
 # Fixed-size types — same in methods and properties
@@ -119,7 +136,7 @@ class SchemaBuilder:
         method = self._entities.get_client_method(entity_name, method_index)
         if method is None:
             return None
-        return self._build_args_schema(method.args, in_method=True)
+        return self._build_args_schema(method.name, method.args, in_method=True)
 
     def build_property_schema(
         self, entity_name: str, prop_index: int,
@@ -147,7 +164,7 @@ class SchemaBuilder:
         return self._resolve_type(prop.type_name, in_method=True)
 
     def _build_args_schema(
-        self, args: list[tuple[str, str]], *, in_method: bool,
+        self, method_name: str, args: list[tuple[str, str]], *, in_method: bool,
     ) -> cs.Construct[Any, Any]:
         """Build a struct from a method's argument list."""
         if not args:
@@ -156,7 +173,18 @@ class SchemaBuilder:
         fields: list[cs.Construct[Any, Any]] = []
         for arg_name, arg_type in args:
             label = arg_name if not arg_name.isdigit() else f"arg{arg_name}"
-            fields.append(label / self._resolve_type(arg_type, in_method=in_method))
+            override_alias_name = METHOD_BLOB_OVERRIDES.get((method_name, label))
+            if override_alias_name:
+                alias = self._aliases.resolve(override_alias_name)
+                if alias is not None:
+                    con = _DecodedBlob(
+                        self._make_blob_construct("BLOB", in_method=in_method), alias,
+                    )
+                else:
+                    con = self._resolve_type(arg_type, in_method=in_method)
+            else:
+                con = self._resolve_type(arg_type, in_method=in_method)
+            fields.append(label / con)
         return cs.Struct(*fields)
 
     def _resolve_type(
@@ -196,6 +224,17 @@ class SchemaBuilder:
     ) -> cs.Construct[Any, Any]:
         """Resolve a TypeAlias to a construct schema."""
         base = alias.base_type.strip()
+
+        # implementedBy aliases → decode the BLOB at parse time.
+        # FIXED_DICT/ARRAY/TUPLE with implementedBy still use normal struct
+        # layout on the wire — only the Python-side deserialization differs.
+        # USER_TYPE aliases (BLOB, UINT16, etc.) use VLH encoding on the wire
+        # regardless of property vs method context (always in_method=True).
+        if alias.has_implemented_by and base not in ("FIXED_DICT", "ARRAY", "TUPLE"):
+            raw_con = self._make_blob_construct(
+                base if base in _VARIABLE_TYPES else "BLOB", in_method=True,
+            )
+            return _DecodedBlob(raw_con, alias)
 
         # Simple alias to a fixed primitive (ENTITY_ID → INT32)
         if base in FIXED_PRIMITIVES:
@@ -250,7 +289,7 @@ class SchemaBuilder:
         """
         if not method.args:
             return cs.Struct()
-        return self._build_args_schema(method.args, in_method=True)
+        return self._build_args_schema(method.name, method.args, in_method=True)
 
     @staticmethod
     def _make_blob_construct(
