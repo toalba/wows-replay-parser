@@ -344,9 +344,16 @@ class GameStateTracker:
                 args = packet.method_args
                 plane_id = int(args.get("squadronID", 0))
                 pos = args.get("position") or {}
+                # Avatar doesn't have teamId as a tracked property (BASE_PLAYER_CREATE
+                # has no inline state). Derive from the Avatar's Vehicle via _own_vehicle_id.
+                team_id = 0
+                if self._own_vehicle_id is not None:
+                    vehicle_props = self._current.get(self._own_vehicle_id, {})
+                    team_id = int(vehicle_props.get("teamId", 0))
                 self._aircraft_log.append((packet.timestamp, plane_id, AircraftState(
                     plane_id=plane_id,
                     squadron_type="airstrike",
+                    team_id=team_id,
                     x=float(pos.get("x", 0)) if isinstance(pos, dict) else 0.0,
                     z=float(pos.get("z", 0)) if isinstance(pos, dict) else 0.0,
                 )))
