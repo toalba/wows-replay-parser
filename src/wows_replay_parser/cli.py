@@ -200,6 +200,10 @@ def main() -> None:
         help="Exclude RawEvent (unmatched methods)",
     )
     @click.option("--pretty", is_flag=True, help="Pretty-print JSON")
+    @click.option(
+        "--snapshot-interval", default=5.0, type=float,
+        help="State snapshot interval in seconds (0 to disable, default: 5)",
+    )
     def export(
         replay_path: str,
         gamedata: str,
@@ -208,6 +212,7 @@ def main() -> None:
         no_properties: bool,
         no_raw: bool,
         pretty: bool,
+        snapshot_interval: float,
     ) -> None:
         """Export replay to structured JSON."""
         import dataclasses
@@ -280,15 +285,52 @@ def main() -> None:
         # Players
         players_out = _make_serializable(result.players)
 
+        # State snapshots
+        snapshots_out: list[object] = []
+        if snapshot_interval > 0 and result.duration > 0:
+            import math
+            timestamps = [
+                i * snapshot_interval
+                for i in range(int(math.ceil(result.duration / snapshot_interval)) + 1)
+            ]
+            for game_state in result.iter_states(timestamps):
+                snap: dict[str, object] = {
+                    "timestamp": round(game_state.timestamp, 2),
+                    "ships": {},
+                    "battle": {
+                        "team_scores": game_state.battle.team_scores,
+                        "time_left": game_state.battle.time_left,
+                    },
+                }
+                for eid, ship in game_state.ships.items():
+                    snap["ships"][eid] = {
+                        "health": round(ship.health, 1),
+                        "max_health": round(ship.max_health, 1),
+                        "is_alive": ship.is_alive,
+                        "team_id": ship.team_id,
+                        "position": (
+                            round(ship.position[0], 2),
+                            round(ship.position[1], 2),
+                            round(ship.position[2], 2),
+                        ) if ship.position != (0.0, 0.0, 0.0) else None,
+                        "yaw": round(ship.yaw, 4) if ship.yaw else None,
+                        "speed": round(ship.speed, 1) if ship.speed else None,
+                        "is_detected": ship.is_detected,
+                        "burning": ship.burning_flags != 0,
+                    }
+                snapshots_out.append(snap)
+
         # Build output
-        doc = {
+        doc: dict[str, object] = {
             "meta": {
                 "map": result.map_name,
                 "version": result.game_version,
                 "duration": round(result.duration, 2),
                 "player_count": len(result.players),
+                "snapshot_interval": snapshot_interval if snapshot_interval > 0 else None,
             },
             "players": players_out,
+            "state_snapshots": snapshots_out,
             "events": events_out,
         }
 
@@ -299,6 +341,7 @@ def main() -> None:
             Path(output).write_text(json_str, encoding="utf-8")
             click.echo(
                 f"Exported {len(events_out)} events, "
+                f"{len(snapshots_out)} snapshots, "
                 f"{len(result.players)} players -> {output}"
             )
         else:
