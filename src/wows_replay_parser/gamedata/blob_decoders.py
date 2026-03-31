@@ -28,15 +28,6 @@ _ZIPPED_ALIASES = frozenset({"ZIPPED_BLOB", "CACHED_ZIPPED_BLOB"})
 _MSGPACK_ALIASES = frozenset({"MSGPACK_BLOB"})
 _PICKLE_ALIASES = frozenset({"PYTHON", "PICKLED_BLOB"})
 
-# (method_name, arg_name) -> alias_name to use for decoding raw BLOB args
-# that have no alias in the .def file.
-METHOD_BLOB_OVERRIDES: dict[tuple[str, str], str] = {
-    ("receiveDamageStat", "arg0"): "PICKLED_BLOB",
-    ("syncShipPhysics", "arg1"): "PICKLED_BLOB",
-    ("setConsumables", "arg0"): "PICKLED_BLOB",
-    ("setSqsConsumables", "arg1"): "PICKLED_BLOB",
-}
-
 
 class _AttrObject:
     """Reconstructed pickle class instance with unknown module."""

@@ -25,7 +25,7 @@ from typing import Any
 import construct as cs
 
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry, TypeAlias
-from wows_replay_parser.gamedata.blob_decoders import METHOD_BLOB_OVERRIDES, decode_blob
+from wows_replay_parser.gamedata.blob_decoders import decode_blob, decode_pickle, decode_zipped
 from wows_replay_parser.gamedata.def_loader import MethodDef, PropertyDef
 from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 
@@ -93,6 +93,27 @@ class _DecodedBlob(cs.Construct):
         raise cs.SizeofError("DecodedBlob is variable size")
 
 
+class _AutoPickleBlob(cs.Construct):
+    """Wraps a raw BLOB and auto-decodes pickle if the data starts with
+    a pickle protocol header (0x80). Returns raw bytes otherwise."""
+
+    def __init__(self, subcon: cs.Construct) -> None:
+        super().__init__()
+        self.subcon = subcon
+
+    def _parse(self, stream: Any, context: Any, path: str) -> Any:
+        raw = self.subcon._parsereport(stream, context, path)
+        if isinstance(raw, bytes) and len(raw) >= 2:
+            if raw[0] == 0x80:
+                return decode_pickle(raw)
+            if raw[0] == 0x78:
+                return decode_zipped(raw)
+        return raw
+
+    def _sizeof(self, context: Any, path: str) -> int:
+        raise cs.SizeofError("AutoPickleBlob is variable size")
+
+
 # ── Primitive type maps ────────────────────────────────────────────
 
 # Fixed-size types — same in methods and properties
@@ -136,7 +157,7 @@ class SchemaBuilder:
         method = self._entities.get_client_method(entity_name, method_index)
         if method is None:
             return None
-        return self._build_args_schema(method.name, method.args, in_method=True)
+        return self._build_args_schema(method.args, in_method=True)
 
     def build_property_schema(
         self, entity_name: str, prop_index: int,
@@ -164,7 +185,7 @@ class SchemaBuilder:
         return self._resolve_type(prop.type_name, in_method=True)
 
     def _build_args_schema(
-        self, method_name: str, args: list[tuple[str, str]], *, in_method: bool,
+        self, args: list[tuple[str, str]], *, in_method: bool,
     ) -> cs.Construct[Any, Any]:
         """Build a struct from a method's argument list."""
         if not args:
@@ -173,17 +194,12 @@ class SchemaBuilder:
         fields: list[cs.Construct[Any, Any]] = []
         for arg_name, arg_type in args:
             label = arg_name if not arg_name.isdigit() else f"arg{arg_name}"
-            override_alias_name = METHOD_BLOB_OVERRIDES.get((method_name, label))
-            if override_alias_name:
-                alias = self._aliases.resolve(override_alias_name)
-                if alias is not None:
-                    con = _DecodedBlob(
-                        self._make_blob_construct("BLOB", in_method=in_method), alias,
-                    )
-                else:
-                    con = self._resolve_type(arg_type, in_method=in_method)
-            else:
-                con = self._resolve_type(arg_type, in_method=in_method)
+            con = self._resolve_type(arg_type, in_method=in_method)
+            # Wrap plain BLOB args with auto-pickle detection so any
+            # BLOB that happens to contain pickle data gets decoded
+            # automatically without needing explicit overrides.
+            if arg_type in ("BLOB", "PYTHON") and not isinstance(con, _DecodedBlob):
+                con = _AutoPickleBlob(con)
             fields.append(label / con)
         return cs.Struct(*fields)
 
@@ -289,7 +305,7 @@ class SchemaBuilder:
         """
         if not method.args:
             return cs.Struct()
-        return self._build_args_schema(method.name, method.args, in_method=True)
+        return self._build_args_schema(method.args, in_method=True)
 
     @staticmethod
     def _make_blob_construct(

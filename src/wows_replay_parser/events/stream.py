@@ -26,11 +26,11 @@ from wows_replay_parser.events.models import (
     ChatEvent,
     ConsumableEvent,
     DamageEvent,
+    DamageReceivedStatEvent,
     DeathEvent,
     GameEvent,
     MinimapVisionEvent,
     PositionEvent,
-    PotentialDamageEvent,
     PropertyUpdateEvent,
     RawEvent,
     ScoreUpdateEvent,
@@ -329,17 +329,8 @@ def _torpedoes_created(pkt: Packet) -> list[TorpedoCreatedEvent]:
     return events
 
 
-def _potential_damage(pkt: Packet) -> PotentialDamageEvent:
-    """receiveDamageStat or similar — potential damage / agro points."""
-    args = pkt.method_args or {}
-    return PotentialDamageEvent(
-        timestamp=pkt.timestamp,
-        entity_id=pkt.entity_id,
-        attacker_id=_get(args, "arg0", 0),
-        victim_id=_get(args, "arg1", 0),
-        agro_points=float(_get(args, "arg2", 0) or 0),
-        raw_data=args,
-    )
+# receiveDamageStat is handled as a stateful method on EventStream
+# (needs previous snapshot for delta computation).
 
 
 def _scouting_damage(pkt: Packet) -> ScoutingDamageEvent:
@@ -538,8 +529,7 @@ _METHOD_FACTORIES: dict[str, Callable[[Packet], GameEvent | list[GameEvent]]] = 
     "onAchievementEarned": _achievement,
     # Minimap vision
     "updateMinimapVisionInfo": _minimap_vision_info,  # type: ignore[dict-item]
-    # Stats events — matched if the method exists in the .def files
-    "receiveDamageStat": _potential_damage,
+    # receiveDamageStat: handled separately in EventStream (stateful)
     "receive_CommonCMD": _generic(RawEvent),
     # Squadrons
     "receive_addMinimapSquadron": _squadron_add,
@@ -596,6 +586,40 @@ def _build_ammo_lookup(gamedata_path: str | Path | None) -> dict[int, str]:
     return lookup
 
 
+# DamageStatWeapon: from mc15a2792.pyc enum_weapon, game version 15.1
+# Source: wows-toolkit/crates/wowsunpack/src/game_constants.rs
+_DAMAGE_STAT_WEAPONS: dict[int, str] = {
+    0: "DEFAULT", 1: "MAIN_AP", 2: "MAIN_HE", 3: "ATBA_AP", 4: "ATBA_HE",
+    5: "MAIN_AI_AP", 6: "MAIN_AI_HE", 7: "TORPEDO", 8: "ANTIAIR", 9: "SCOUT",
+    10: "BOMBER_AP", 11: "BOMBER_HE", 12: "TBOMBER", 13: "FIGHTER",
+    14: "SFIGHTER", 15: "TURRET", 16: "SPOT", 17: "BURN", 18: "RAM",
+    19: "TERRAIN", 20: "FLOOD", 21: "MIRROR", 22: "RADAR", 23: "XRAY",
+    24: "CONS_SPOT", 25: "SEA_MINE", 26: "FEL", 27: "DEPTH_CHARGE",
+    28: "ROCKET_HE", 29: "AA_NEAR", 30: "AA_MEDIUM", 31: "AA_FAR",
+    32: "MAIN_CS", 33: "ATBA_CS", 34: "PORTAL", 35: "TORPEDO_ACC",
+    36: "TORPEDO_MAG", 37: "PING", 38: "PING_SLOW", 39: "PING_FAST",
+    40: "TORPEDO_ACC_OFF", 41: "ROCKET_AP", 42: "SKIP_HE", 43: "SKIP_AP",
+    44: "ACID", 45: "SECTOR_WAVE", 46: "MATCH", 47: "TIMER",
+    48: "CHARGE_LASER", 49: "PULSE_LASER", 50: "AXIS_LASER",
+    51: "BOMBER_AP_ASUP", 52: "BOMBER_HE_ASUP", 53: "TBOMBER_ASUP",
+    54: "ROCKET_HE_ASUP", 55: "ROCKET_AP_ASUP", 56: "SKIP_HE_ASUP",
+    57: "SKIP_AP_ASUP", 58: "DEPTH_CHARGE_ASUP", 59: "TORPEDO_DEEP",
+    60: "TORPEDO_ALTER", 61: "AIR_SUPPORT", 62: "BOMBER_AP_ALTER",
+    63: "BOMBER_HE_ALTER", 64: "TBOMBER_ALTER", 65: "ROCKET_HE_ALTER",
+    66: "ROCKET_AP_ALTER", 67: "SKIP_HE_ALTER", 68: "SKIP_AP_ALTER",
+    69: "DEPTH_CHARGE_ALTER", 70: "RECON", 71: "BOMBER_AP_TC",
+    72: "BOMBER_HE_TC", 73: "TBOMBER_TC", 74: "ROCKET_HE_TC",
+    75: "ROCKET_AP_TC", 76: "SKIP_HE_TC", 77: "SKIP_AP_TC",
+    78: "DEPTH_CHARGE_TC", 79: "PHASER_LASER", 80: "EVENT1", 81: "EVENT2",
+    82: "TORPEDO_PHOTON", 83: "MISSILE", 84: "ANTI_MISSILE",
+}
+
+# DamageStatCategory: from DamageStatsType in mc15a2792.pyc, game version 15.1
+_DAMAGE_STAT_CATEGORIES: dict[int, str] = {
+    0: "ENEMY", 1: "ALLY", 2: "SPOT", 3: "AGRO",
+}
+
+
 class EventStream:
     """Converts packets into typed game events."""
 
@@ -606,6 +630,8 @@ class EventStream:
     ) -> None:
         self._tracker = tracker
         self._ammo_lookup = _build_ammo_lookup(gamedata_path)
+        # State for receiveDamageStat delta computation
+        self._prev_damage_stat: dict[tuple[int, int], tuple[float, float]] = {}
 
     def process(self, packets: list[Packet]) -> list[GameEvent]:
         """Process all packets into game events."""
@@ -694,6 +720,9 @@ class EventStream:
 
         # Method call packets
         elif packet.is_method_call and packet.method_name:
+            # Stateful handler for receiveDamageStat (needs delta tracking)
+            if packet.method_name == "receiveDamageStat":
+                return self._damage_stat_events(packet)
             factory = _METHOD_FACTORIES.get(packet.method_name)
             if factory is not None:
                 out = factory(packet)
@@ -711,6 +740,58 @@ class EventStream:
 
         # All other packet types (entity creation, camera, etc.)
         return []
+
+    def _damage_stat_events(self, packet: Packet) -> list[DamageReceivedStatEvent]:
+        """Convert receiveDamageStat cumulative snapshot into delta events.
+
+        Payload: {(param_id, stat_type): [count, total_damage]}
+        The target is always self (the replay player's Avatar).
+        """
+        args = packet.method_args or {}
+        stat_dict = args.get("arg0")
+        if not isinstance(stat_dict, dict):
+            return []
+
+        # Resolve own vehicle ID for entity_id on events
+        own_vehicle = (
+            self._tracker.own_vehicle_id if self._tracker else None
+        ) or packet.entity_id
+
+        events: list[DamageReceivedStatEvent] = []
+        for (param_id, stat_type_id), values in stat_dict.items():
+            if not isinstance(values, (list, tuple)) or len(values) < 2:
+                continue
+            count, total = float(values[0]), float(values[1])
+            key = (int(param_id), int(stat_type_id))
+
+            prev_count, prev_total = self._prev_damage_stat.get(key, (0.0, 0.0))
+            delta_count = count - prev_count
+            delta_total = total - prev_total
+            self._prev_damage_stat[key] = (count, total)
+
+            # Skip entries with no new damage this tick
+            if delta_count == 0 and delta_total == 0.0:
+                continue
+
+            param_name = _DAMAGE_STAT_WEAPONS.get(
+                param_id, f"unknown_{param_id}",
+            )
+            stat_name = _DAMAGE_STAT_CATEGORIES.get(
+                stat_type_id, f"unknown_{stat_type_id}",
+            )
+
+            events.append(DamageReceivedStatEvent(
+                timestamp=packet.timestamp,
+                entity_id=own_vehicle,
+                damage_param=param_name,
+                stat_type=stat_name,
+                delta_count=int(delta_count),
+                delta_total=delta_total,
+                cumulative_count=int(count),
+                cumulative_total=total,
+                raw_data=args,
+            ))
+        return events
 
     def _cap_point_events(
         self, packet: Packet,

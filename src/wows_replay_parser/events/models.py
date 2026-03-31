@@ -201,12 +201,29 @@ class RawEvent(GameEvent):
 
 
 @dataclass
-class PotentialDamageEvent(GameEvent):
-    """Potential damage received (agro points). From Avatar stats methods."""
+class DamageReceivedStatEvent(GameEvent):
+    """Cumulative damage-received stat snapshot from receiveDamageStat.
 
-    attacker_id: int = 0
-    victim_id: int = 0
-    agro_points: float = 0.0
+    Each event carries the delta since the previous snapshot for one
+    (damage_param, stat_type) bucket.  The target is always the replay's
+    own player (Avatar entity).
+    """
+
+    damage_param: str = ""  # weapon name from DAMAGE_RECEIVED_PARAMS
+    stat_type: str = ""  # "ENEMY", "ALLY", "AGRO", "SPOT"
+    delta_count: int = 0
+    delta_total: float = 0.0
+    cumulative_count: int = 0
+    cumulative_total: float = 0.0
+
+    @property
+    def is_dealt(self) -> bool:
+        """True when this records damage dealt to enemies."""
+        return self.stat_type == "ENEMY"
+
+
+# Kept for backwards compatibility — alias to the new name
+PotentialDamageEvent = DamageReceivedStatEvent
 
 
 @dataclass
