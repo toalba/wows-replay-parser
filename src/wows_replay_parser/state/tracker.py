@@ -811,20 +811,17 @@ class GameStateTracker:
         Note: the pickle ordering does NOT match GameParams AbilitySlot ordering.
         We use the pickle ordering as the authoritative display order.
         """
-        import pickle as _pickle
-
         args = packet.method_args
         if not args:
             return
-        raw = args.get("arg0", b"")
-        if not isinstance(raw, bytes) or len(raw) < 10:
-            return
-
-        try:
-            data = _pickle.loads(raw, encoding="latin-1")
-        except Exception:
-            return
-
+        data = args.get("arg0")
+        if isinstance(data, bytes):
+            # Legacy path: raw bytes (pre-auto-pickle)
+            import pickle as _pickle
+            try:
+                data = _pickle.loads(data, encoding="latin-1")
+            except Exception:
+                return
         if not isinstance(data, dict):
             return
         cons_list = data.get("consumablesDict")
@@ -852,12 +849,14 @@ class GameStateTracker:
         if not args:
             return
 
-        # Get the BLOB param (may be named or positional)
+        # Get the consumable param (may be decoded dict or raw bytes)
         params = args.get("consumableUsageParams") or args.get("arg0", b"")
         duration = args.get("workTimeLeft") or args.get("arg1", 0.0)
 
-        if isinstance(params, bytes) and len(params) >= 2:
-            consumable_id = params[1]  # Second byte = consumable slot/type
+        if isinstance(params, dict) and "consumable_id" in params:
+            consumable_id = params["consumable_id"]
+        elif isinstance(params, bytes) and len(params) >= 2:
+            consumable_id = params[1]  # Legacy: second byte = consumable slot/type
         else:
             return
 
