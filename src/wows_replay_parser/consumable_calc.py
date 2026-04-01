@@ -53,9 +53,10 @@ _TYPE_TO_CATEGORY: dict[str, str] = {
 }
 
 # Ship species indices matching crewModifiersCompactParams.learnedSkills order.
-_SPECIES_TO_INDEX: dict[str, int] = {
-    "Destroyer": 0, "Cruiser": 1, "Battleship": 2,
-    "AirCarrier": 3, "Submarine": 4, "Auxiliary": 5,
+# Order is alphabetical (verified against real replay data).
+SPECIES_INDEX: dict[str, int] = {
+    "AirCarrier": 0, "Battleship": 1, "Cruiser": 2,
+    "Destroyer": 3, "Auxiliary": 4, "Submarine": 5,
 }
 
 
