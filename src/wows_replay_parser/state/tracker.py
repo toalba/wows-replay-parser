@@ -116,18 +116,21 @@ class GameStateTracker:
             snapshot: dict[int, dict[str, Any]] = {}
             for eid, props in self._current.items():
                 if eid in self._dirty_entities:
-                    # Entity was modified — shallow copy its property dict.
-                    # Values are primitives/tuples (immutable) or dicts that
-                    # get replaced (not mutated in place) for ENTITY_PROPERTY.
-                    # NestedProperty mutates in place but _snapshot_value
-                    # already creates a deep copy for history recording.
-                    snapshot[eid] = dict(props)
+                    # Entity was modified — deep-copy mutable property values.
+                    # NESTED_PROPERTY (0x23) mutates dicts/lists in-place on
+                    # _current, so a shallow copy would share references and
+                    # corrupt earlier snapshots when later packets arrive.
+                    snapshot[eid] = self._snapshot_props(props)
                 elif eid in self._prev_snapshot:
-                    # Entity unchanged — reuse previous snapshot dict
+                    # Safe to reuse: entity not dirty means no writes to
+                    # _current[eid] since last snapshot. NESTED_PROPERTY
+                    # handler must mark entities dirty on any mutation —
+                    # if that invariant breaks, the reused snapshot will
+                    # silently diverge from _current.
                     snapshot[eid] = self._prev_snapshot[eid]
                 else:
-                    # New entity, first snapshot — shallow copy
-                    snapshot[eid] = dict(props)
+                    # New entity, first snapshot — deep-copy mutable values
+                    snapshot[eid] = self._snapshot_props(props)
             self._snapshots.append((packet.timestamp, snapshot))
             self._prev_snapshot = snapshot
             self._dirty_entities.clear()
@@ -1071,6 +1074,19 @@ class GameStateTracker:
             is_detected=is_detected,
             death_position=death_position,
         )
+
+    @staticmethod
+    def _snapshot_props(props: dict[str, Any]) -> dict[str, Any]:
+        """Deep-copy mutable property values for snapshot isolation.
+
+        Applies _snapshot_value to dicts/lists (which may be mutated
+        in-place by NESTED_PROPERTY) while leaving primitives as-is.
+        """
+        return {
+            k: GameStateTracker._snapshot_value(v)
+            if isinstance(v, (dict, list)) else v
+            for k, v in props.items()
+        }
 
     @staticmethod
     def _snapshot_value(value: Any) -> Any:
