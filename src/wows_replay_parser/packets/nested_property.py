@@ -48,11 +48,23 @@ class BitReader:
         return self._data[byte_pos:]
 
 
+_bits_for_count_cache: dict[int, int] = {}
+
+
 def _bits_for_count(count: int) -> int:
     """Number of bits needed to represent indices 0..count-1."""
+    cached = _bits_for_count_cache.get(count)
+    if cached is not None:
+        return cached
     if count <= 1:
-        return 1
-    return math.ceil(math.log2(count))
+        result = 1
+    else:
+        result = math.ceil(math.log2(count))
+    _bits_for_count_cache[count] = result
+    return result
+
+
+_type_structure_cache: dict[str, dict[str, Any] | None] = {}
 
 
 def _resolve_type_structure(
@@ -66,6 +78,21 @@ def _resolve_type_structure(
         {"kind": "leaf", "type_name": type_name}
     or None if unresolvable.
     """
+    cached = _type_structure_cache.get(type_name)
+    if cached is not None:
+        return cached
+    if type_name in _type_structure_cache:
+        return None  # explicitly cached as None
+
+    result = _resolve_type_structure_impl(type_name, aliases)
+    _type_structure_cache[type_name] = result
+    return result
+
+
+def _resolve_type_structure_impl(
+    type_name: str, aliases: AliasRegistry,
+) -> dict[str, Any] | None:
+    """Uncached implementation of _resolve_type_structure."""
     # Handle inline ARRAY<of>ELEMENT_TYPE</of> syntax (not in alias registry)
     if type_name.startswith("ARRAY<of>") and type_name.endswith("</of>"):
         element_type = type_name[9:-5]  # strip ARRAY<of> and </of>

@@ -420,7 +420,23 @@ class MinefieldInfoParser:
 
 
 class CrewModifiersCompactParamsParser:
-    """CREW_MODIFIERS_COMPACT_PARAMS — paramsId(u32), isInAdaptation(bool), learnedSkills(array)."""
+    """CREW_MODIFIERS_COMPACT_PARAMS — paramsId(u32), isInAdaptation(bool), learnedSkills(array).
+
+    Wire format (standard FIXED_DICT encoding):
+        paramsId:        uint32 LE  (GameParams crew ID)
+        isInAdaptation:  uint8      (0 or 1)
+        learnedSkills:   ARRAY<ARRAY<UINT8>>:
+            outer_count: uint8      (number of ship types, typically 6)
+            per ship type:
+                inner_count: uint8  (number of learned skill IDs)
+                skill_ids:   uint8 × inner_count
+
+    Ship type indices: 0=Destroyer, 1=Cruiser, 2=Battleship,
+                       3=AirCarrier, 4=Submarine, 5=Auxiliary
+
+    Note: The construct schema already handles this type natively (FIXED_DICT
+    with implementedBy uses normal struct layout). This parser is a fallback.
+    """
 
     @staticmethod
     def parse(data: bytes) -> dict[str, Any]:
@@ -429,11 +445,23 @@ class CrewModifiersCompactParamsParser:
             return {"raw": data.hex()}
         params_id = struct.unpack_from("<I", data, 0)[0]
         is_in_adaptation = bool(data[4])
-        remaining = data[5:]
+        off = 5
+        learned_skills: list[list[int]] = []
+        if off < len(data):
+            outer_count = data[off]
+            off += 1
+            for _ in range(outer_count):
+                if off >= len(data):
+                    break
+                inner_count = data[off]
+                off += 1
+                skills = list(data[off:off + inner_count])
+                off += inner_count
+                learned_skills.append(skills)
         return {
             "params_id": params_id,
             "is_in_adaptation": is_in_adaptation,
-            "learned_skills_raw": remaining.hex() if remaining else "",
+            "learned_skills": learned_skills,
         }
 
 

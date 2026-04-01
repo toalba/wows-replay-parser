@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import dataclasses
 import math
 from bisect import bisect_left, bisect_right
@@ -67,6 +66,11 @@ class GameStateTracker:
         self._positions: dict[int, list[tuple[float, tuple[float, float, float], float]]] = {}
         self._snapshots: list[tuple[float, dict[int, dict[str, Any]]]] = []
         self._last_snapshot_time: float = -_SNAPSHOT_INTERVAL
+        # Dirty tracking for copy-on-write snapshots: entity_ids modified
+        # since the last snapshot. Only these need copying on next snapshot.
+        self._dirty_entities: set[int] = set()
+        # Previous snapshot data — clean entities reuse their dict from here
+        self._prev_snapshot: dict[int, dict[str, Any]] = {}
         # Minimap vision info (Trap 5/6): entity_id → list of
         # (timestamp, world_x, world_z, heading_rad, is_visible, is_disappearing)
         self._minimap_positions: dict[int, list[tuple[float, float, float, float, bool, bool]]] = {}
@@ -105,8 +109,28 @@ class GameStateTracker:
         # the snapshot reflects the state just before this timestamp.
         # This ensures bisect_right(history_timestamps, snapshot_time)
         # correctly excludes all entries at or after this timestamp.
+        #
+        # Copy-on-write: only shallow-copy entities that changed since
+        # the last snapshot. Clean entities reuse their previous dict.
         if packet.timestamp - self._last_snapshot_time >= _SNAPSHOT_INTERVAL:
-            self._snapshots.append((packet.timestamp, copy.deepcopy(self._current)))
+            snapshot: dict[int, dict[str, Any]] = {}
+            for eid, props in self._current.items():
+                if eid in self._dirty_entities:
+                    # Entity was modified — shallow copy its property dict.
+                    # Values are primitives/tuples (immutable) or dicts that
+                    # get replaced (not mutated in place) for ENTITY_PROPERTY.
+                    # NestedProperty mutates in place but _snapshot_value
+                    # already creates a deep copy for history recording.
+                    snapshot[eid] = dict(props)
+                elif eid in self._prev_snapshot:
+                    # Entity unchanged — reuse previous snapshot dict
+                    snapshot[eid] = self._prev_snapshot[eid]
+                else:
+                    # New entity, first snapshot — shallow copy
+                    snapshot[eid] = dict(props)
+            self._snapshots.append((packet.timestamp, snapshot))
+            self._prev_snapshot = snapshot
+            self._dirty_entities.clear()
             self._last_snapshot_time = packet.timestamp
 
         # Entity creation — register type
@@ -119,6 +143,7 @@ class GameStateTracker:
             if packet.entity_type is not None:
                 self._entity_types[packet.entity_id] = packet.entity_type
                 self._current.setdefault(packet.entity_id, {})
+                self._dirty_entities.add(packet.entity_id)
 
             # Seed initial position from ENTITY_CREATE so vehicles are
             # visible from spawn (especially the self player and allies
@@ -157,6 +182,7 @@ class GameStateTracker:
         # Property update
         elif ptype == PacketType.ENTITY_PROPERTY:
             if packet.property_name:
+                self._dirty_entities.add(packet.entity_id)
                 entity_props = self._current.setdefault(packet.entity_id, {})
                 old_value = entity_props.get(packet.property_name)
                 entity_props[packet.property_name] = packet.property_value
@@ -181,6 +207,7 @@ class GameStateTracker:
         # inside construct Containers.
         elif ptype == PacketType.NESTED_PROPERTY:
             if packet.property_name and packet.property_value is not None:
+                self._dirty_entities.add(packet.entity_id)
                 entity_type = packet.entity_type or self._entity_types.get(packet.entity_id, "")
                 change = PropertyChange(
                     timestamp=packet.timestamp,
@@ -267,6 +294,7 @@ class GameStateTracker:
                 if victim_id is not None:
                     # Trap 13: cache death position before marking dead
                     self._cache_death_position(victim_id, packet.timestamp)
+                    self._dirty_entities.add(victim_id)
                     victim_props = self._current.setdefault(victim_id, {})
                     old = victim_props.get("isAlive", True)
                     victim_props["isAlive"] = False
@@ -286,6 +314,7 @@ class GameStateTracker:
             elif packet.method_name == "kill" and packet.entity_id:
                 # Trap 13: cache death position before marking dead
                 self._cache_death_position(packet.entity_id, packet.timestamp)
+                self._dirty_entities.add(packet.entity_id)
                 entity_props = self._current.setdefault(packet.entity_id, {})
                 old = entity_props.get("isAlive", True)
                 entity_props["isAlive"] = False

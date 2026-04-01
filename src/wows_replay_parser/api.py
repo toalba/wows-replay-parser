@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import logging
+import pickle
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +22,8 @@ from wows_replay_parser.replay.reader import ReplayReader
 from wows_replay_parser.roster import PlayerInfo, build_roster
 from wows_replay_parser.state.tracker import GameStateTracker
 
+_log = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
@@ -26,6 +31,74 @@ if TYPE_CHECKING:
     from wows_replay_parser.state.models import BattleState, GameState, ShipState
 
 _T = TypeVar("_T", bound=GameEvent)
+
+
+def _gamedata_version_hash(gamedata_path: Path) -> str:
+    """Compute a fast hash of the gamedata directory for cache invalidation.
+
+    Uses mtime of alias.xml + entities.xml + all .def files. Fast because
+    it only stats files, doesn't read them.
+    """
+    h = hashlib.md5(usedforsecurity=False)
+    # alias.xml mtime
+    alias_xml = gamedata_path / "alias.xml"
+    if alias_xml.exists():
+        h.update(str(alias_xml.stat().st_mtime_ns).encode())
+    # entities.xml mtime
+    for candidate in (gamedata_path / "entities.xml", gamedata_path.parent / "entities.xml"):
+        if candidate.exists():
+            h.update(str(candidate.stat().st_mtime_ns).encode())
+            break
+    # All .def files
+    for def_file in sorted(gamedata_path.glob("*.def")):
+        h.update(def_file.name.encode())
+        h.update(str(def_file.stat().st_mtime_ns).encode())
+    for def_file in sorted((gamedata_path / "interfaces").glob("*.def")):
+        h.update(def_file.name.encode())
+        h.update(str(def_file.stat().st_mtime_ns).encode())
+    return h.hexdigest()[:16]
+
+
+def _load_gamedata_cached(
+    gamedata_path: Path,
+) -> tuple[AliasRegistry, EntityRegistry]:
+    """Load gamedata with disk caching.
+
+    First run: normal XML parsing (~1.2s). Subsequent runs for the same
+    gamedata version: pickle load (~0.05s).
+    """
+    cache_dir = gamedata_path / ".cache"
+    version_hash = _gamedata_version_hash(gamedata_path)
+    cache_file = cache_dir / f"gamedata_{version_hash}.pkl"
+
+    if cache_file.exists():
+        try:
+            with open(cache_file, "rb") as f:
+                aliases, registry = pickle.load(f)
+            _log.debug("Loaded gamedata from cache: %s", cache_file)
+            return aliases, registry
+        except Exception:
+            _log.debug("Cache load failed, rebuilding", exc_info=True)
+
+    # Normal load
+    aliases = AliasRegistry.from_file(gamedata_path / "alias.xml")
+    loader = DefLoader(gamedata_path)
+    entity_defs = loader.load_all()
+
+    registry = EntityRegistry(aliases)
+    for entity_def in entity_defs.values():
+        registry.register(entity_def)
+
+    # Write cache
+    try:
+        cache_dir.mkdir(exist_ok=True)
+        with open(cache_file, "wb") as f:
+            pickle.dump((aliases, registry), f, protocol=pickle.HIGHEST_PROTOCOL)
+        _log.debug("Wrote gamedata cache: %s", cache_file)
+    except Exception:
+        _log.debug("Failed to write gamedata cache", exc_info=True)
+
+    return aliases, registry
 
 
 @dataclass
@@ -162,14 +235,8 @@ def parse_replay(
                 stacklevel=2,
             )
 
-    # Load gamedata
-    aliases = AliasRegistry.from_file(gamedata_path / "alias.xml")
-    loader = DefLoader(gamedata_path)
-    entity_defs = loader.load_all()
-
-    registry = EntityRegistry(aliases)
-    for entity_def in entity_defs.values():
-        registry.register(entity_def)
+    # Load gamedata (with disk cache for repeat runs)
+    aliases, registry = _load_gamedata_cached(gamedata_path)
 
     # Read replay file
     reader = ReplayReader()

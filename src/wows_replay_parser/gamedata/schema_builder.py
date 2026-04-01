@@ -149,15 +149,29 @@ class SchemaBuilder:
     def __init__(self, aliases: AliasRegistry, entities: EntityRegistry) -> None:
         self._aliases = aliases
         self._entities = entities
+        # Per-instance schema caches — safe because fresh instances per replay
+        self._method_cache: dict[tuple[str, int], cs.Construct | None] = {}
+        self._property_cache: dict[tuple[str, int], cs.Construct | None] = {}
+        self._inline_property_cache: dict[tuple[str, int], cs.Construct | None] = {}
+        self._type_cache: dict[tuple[str, bool], cs.Construct] = {}
 
     def build_method_schema(
         self, entity_name: str, method_index: int,
     ) -> cs.Construct[Any, Any] | None:
         """Build a schema for a specific client method's arguments."""
+        key = (entity_name, method_index)
+        cached = self._method_cache.get(key)
+        if cached is not None:
+            return cached
+        if key in self._method_cache:
+            return None  # explicitly cached as None
         method = self._entities.get_client_method(entity_name, method_index)
         if method is None:
+            self._method_cache[key] = None
             return None
-        return self._build_args_schema(method.args, in_method=True)
+        result = self._build_args_schema(method.args, in_method=True)
+        self._method_cache[key] = result
+        return result
 
     def build_property_schema(
         self, entity_name: str, prop_index: int,
@@ -166,10 +180,19 @@ class SchemaBuilder:
 
         Properties use u32 prefix for BLOB/STRING (standard encoding).
         """
+        key = (entity_name, prop_index)
+        cached = self._property_cache.get(key)
+        if cached is not None:
+            return cached
+        if key in self._property_cache:
+            return None
         prop = self._entities.get_client_property(entity_name, prop_index)
         if prop is None:
+            self._property_cache[key] = None
             return None
-        return self._resolve_type(prop.type_name, in_method=False)
+        result = self._resolve_type(prop.type_name, in_method=False)
+        self._property_cache[key] = result
+        return result
 
     def build_inline_property_schema(
         self, entity_name: str, prop_index: int,
@@ -179,10 +202,19 @@ class SchemaBuilder:
         Inline state (EntityCreate) uses vlh encoding for variable-length
         types (same as method args: u8/u16 escalating prefix, not u32).
         """
+        key = (entity_name, prop_index)
+        cached = self._inline_property_cache.get(key)
+        if cached is not None:
+            return cached
+        if key in self._inline_property_cache:
+            return None
         prop = self._entities.get_client_property(entity_name, prop_index)
         if prop is None:
+            self._inline_property_cache[key] = None
             return None
-        return self._resolve_type(prop.type_name, in_method=True)
+        result = self._resolve_type(prop.type_name, in_method=True)
+        self._inline_property_cache[key] = result
+        return result
 
     def _build_args_schema(
         self, args: list[tuple[str, str]], *, in_method: bool,
@@ -213,6 +245,19 @@ class SchemaBuilder:
             in_method: True = inside a method call (use u8/u16 blob prefix),
                        False = property update (use u32 blob prefix).
         """
+        key = (type_name, in_method)
+        cached = self._type_cache.get(key)
+        if cached is not None:
+            return cached
+
+        result = self._resolve_type_impl(type_name, in_method=in_method)
+        self._type_cache[key] = result
+        return result
+
+    def _resolve_type_impl(
+        self, type_name: str, *, in_method: bool,
+    ) -> cs.Construct[Any, Any]:
+        """Resolve a type name to a construct schema (uncached implementation)."""
         # Fixed primitive
         if type_name in FIXED_PRIMITIVES:
             return FIXED_PRIMITIVES[type_name]
