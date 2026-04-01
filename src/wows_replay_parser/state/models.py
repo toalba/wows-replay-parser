@@ -113,6 +113,31 @@ class AircraftState:
 
 
 @dataclass
+class SmokeScreenState:
+    """Snapshot of a smoke screen entity."""
+
+    entity_id: int
+    radius: float = 0.0
+    height: float = 0.0
+    bc_radius: float = 0.0
+    active_point_index: int = -1
+    points: list[tuple[float, float, float]] = field(default_factory=list)
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+@dataclass
+class BuildingState:
+    """Snapshot of a building entity (e.g., shore installations)."""
+
+    entity_id: int
+    params_id: int = 0
+    team_id: int = 0
+    is_alive: bool = True
+    is_suppressed: bool = False
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+@dataclass
 class GameState:
     """Full game state snapshot at a point in time."""
 
@@ -120,3 +145,5 @@ class GameState:
     ships: dict[int, ShipState] = field(default_factory=dict)
     battle: BattleState = field(default_factory=BattleState)
     aircraft: dict[int, AircraftState] = field(default_factory=dict)
+    smoke_screens: dict[int, SmokeScreenState] = field(default_factory=dict)
+    buildings: dict[int, BuildingState] = field(default_factory=dict)

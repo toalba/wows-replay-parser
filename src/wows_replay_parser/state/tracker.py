@@ -14,12 +14,14 @@ from wows_replay_parser.packets.types import Packet, PacketType
 from .models import (
     AircraftState,
     BattleState,
+    BuildingState,
     CapturePointState,
     GameState,
     HoldScoring,
     KillScoring,
     PropertyChange,
     ShipState,
+    SmokeScreenState,
 )
 
 _SENTINEL = object()
@@ -395,6 +397,8 @@ class GameStateTracker:
         return GameState(
             timestamp=t, ships=ships, battle=battle,
             aircraft=self._build_aircraft_at(t),
+            smoke_screens=self._build_smoke_screens(state, t),
+            buildings=self._build_buildings(state, t),
         )
 
     def iter_states(
@@ -608,6 +612,8 @@ class GameStateTracker:
             yield GameState(
                 timestamp=t, ships=ships, battle=battle,
                 aircraft=dict(running_aircraft),
+                smoke_screens=self._build_smoke_screens(running, t),
+                buildings=self._build_buildings(running, t),
             )
 
     def ship_state(self, entity_id: int, t: float) -> ShipState:
@@ -1064,50 +1070,78 @@ class GameStateTracker:
             if self._entity_types.get(entity_id) != "InteractiveZone":
                 continue
             cs_raw = props.get("componentsState", {})
-            cap_logic: dict[str, Any] = {}
-            ctrl_point: dict[str, Any] = {}
-            if isinstance(cs_raw, dict):
-                cap_logic = cs_raw.get("captureLogic") or {}
-                ctrl_point = cs_raw.get("controlPoint") or {}
+            cap_logic = _container_get(cs_raw, "captureLogic") or {}
+            ctrl_point = _container_get(cs_raw, "controlPoint") or {}
 
             cap_points.append(CapturePointState(
                 entity_id=entity_id,
                 radius=float(props.get("radius", 0)),
                 team_id=int(props.get("teamId", 0)),
-                progress=(
-                    float(cap_logic.get("progress", 0))
-                    if isinstance(cap_logic, dict) else 0.0
-                ),
-                capture_speed=(
-                    float(cap_logic.get("captureSpeed", 0))
-                    if isinstance(cap_logic, dict) else 0.0
-                ),
-                invader_team=(
-                    int(cap_logic.get("invaderTeam", 0))
-                    if isinstance(cap_logic, dict) else 0
-                ),
-                has_invaders=(
-                    bool(cap_logic.get("hasInvaders", False))
-                    if isinstance(cap_logic, dict) else False
-                ),
-                both_inside=(
-                    bool(cap_logic.get("bothInside", False))
-                    if isinstance(cap_logic, dict) else False
-                ),
-                is_enabled=(
-                    bool(cap_logic.get("isEnabled", False))
-                    if isinstance(cap_logic, dict) else False
-                ),
-                point_type=(
-                    int(ctrl_point.get("type", 0))
-                    if isinstance(ctrl_point, dict) else 0
-                ),
-                point_index=(
-                    int(ctrl_point.get("index", -1))
-                    if isinstance(ctrl_point, dict) else -1
-                ),
+                progress=float(_container_get(cap_logic, "progress", 0)),
+                capture_speed=float(_container_get(cap_logic, "captureSpeed", 0)),
+                invader_team=int(_container_get(cap_logic, "invaderTeam", 0)),
+                has_invaders=bool(_container_get(cap_logic, "hasInvaders", False)),
+                both_inside=bool(_container_get(cap_logic, "bothInside", False)),
+                is_enabled=bool(_container_get(cap_logic, "isEnabled", False)),
+                point_type=int(_container_get(ctrl_point, "type", 0)),
+                point_index=int(_container_get(ctrl_point, "index", -1)),
             ))
         return cap_points
+
+    def _build_smoke_screens(
+        self, all_state: dict[int, dict[str, Any]], t: float,
+    ) -> dict[int, SmokeScreenState]:
+        """Build smoke screen states from SmokeScreen entities."""
+        result: dict[int, SmokeScreenState] = {}
+        for entity_id, props in all_state.items():
+            if self._entity_types.get(entity_id) != "SmokeScreen":
+                continue
+            pos_data = self.position_at(entity_id, t)
+            position = pos_data if pos_data else (0.0, 0.0, 0.0)
+
+            raw_points = props.get("points", [])
+            points: list[tuple[float, float, float]] = []
+            if isinstance(raw_points, list):
+                for p in raw_points:
+                    if isinstance(p, (list, tuple)) and len(p) >= 3:
+                        points.append((float(p[0]), float(p[1]), float(p[2])))
+                    else:
+                        x = float(_container_get(p, "x", 0))
+                        y = float(_container_get(p, "y", 0))
+                        z = float(_container_get(p, "z", 0))
+                        points.append((x, y, z))
+
+            result[entity_id] = SmokeScreenState(
+                entity_id=entity_id,
+                radius=float(props.get("radius", 0)),
+                height=float(props.get("height", 0)),
+                bc_radius=float(props.get("bcRadius", 0)),
+                active_point_index=int(props.get("activePointIndex", -1)),
+                points=points,
+                position=position,
+            )
+        return result
+
+    def _build_buildings(
+        self, all_state: dict[int, dict[str, Any]], t: float,
+    ) -> dict[int, BuildingState]:
+        """Build building states from Building entities."""
+        result: dict[int, BuildingState] = {}
+        for entity_id, props in all_state.items():
+            if self._entity_types.get(entity_id) != "Building":
+                continue
+            pos_data = self.position_at(entity_id, t)
+            position = pos_data if pos_data else (0.0, 0.0, 0.0)
+
+            result[entity_id] = BuildingState(
+                entity_id=entity_id,
+                params_id=int(props.get("paramsId", 0)),
+                team_id=int(props.get("teamId", 0)),
+                is_alive=bool(props.get("isAlive", True)),
+                is_suppressed=bool(props.get("isSuppressed", False)),
+                position=position,
+            )
+        return result
 
     def _build_battle_state(
         self, bl_props: dict[str, Any], all_state: dict[int, dict[str, Any]]

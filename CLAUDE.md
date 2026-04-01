@@ -76,18 +76,23 @@ src/wows_replay_parser/
 ├── packets/           # BigWorld network packet decoding
 │   ├── types.py            # PacketType enum (24 types) + Packet dataclass
 │   ├── decoder.py          # Reads packet stream, 7 handlers, entity tracking
-│   └── type_id_detector.py # Auto-detects type_id → entity_name mapping
-├── state/             # Entity state tracking over time (NEW)
+│   ├── type_id_detector.py # Auto-detects type_id → entity_name mapping
+│   ├── method_id_detector.py    # Auto-detects method ordering from packet data
+│   ├── nested_property.py       # NestedProperty update decoder
+│   └── implemented_by_parsers.py # Custom parsers for implementedBy types
+├── state/             # Entity state tracking over time
 │   ├── models.py           # ShipState, BattleState, CapturePointState, GameState, PropertyChange
-│   └── tracker.py          # GameStateTracker — property history + state_at() queries
+│   └── tracker.py          # GameStateTracker — property history + state_at()/iter_states() queries
 ├── events/            # Typed game event stream
-│   ├── models.py           # All event types (Position, Damage, Death, Shot, Torpedo, Cap, Score, etc.)
+│   ├── models.py           # 20 event types (Position, Damage, Death, Shot, Torpedo, Cap, Score, Vision, Squadron, Ribbon, etc.)
 │   └── stream.py           # Packet → Event transformation with method+property factories
 ├── api.py             # Top-level parse_replay() + ParsedReplay with state queries
-├── roster.py          # Player roster enrichment (JSON header + entity matching)
-├── ribbons.py         # Ribbon derivation from hit events (P2)
+├── roster.py          # Player roster enrichment (JSON header + onArenaStateReceived pickle)
+├── ribbons.py         # Server-authoritative ribbon extraction + derivation from hit events
+├── ship_config.py     # SHIP_CONFIG binary decoder (modules, upgrades, signals, camo)
+├── gamedata_sync.py   # Auto-sync gamedata repo to match replay version
 ├── merge.py           # Dual perspective replay merging (P2)
-└── cli.py             # Click CLI (info, parse, events, state commands)
+└── cli.py             # Click CLI (info, parse, events, state, export commands)
 ```
 
 ## Data Flow
@@ -319,7 +324,7 @@ Some methods have `<VariableLengthHeaderSize>` (1=uint8, 2=uint16, 4=uint32) aff
 ```
 Note: type_id auto-detector infers this from packet analysis, not from entities.xml directly.
 
-### Feature Data Path Status (audited 2026-03-28)
+### Feature Data Path Status (audited 2026-04-01)
 
 **Decode rate: 100%** (37,307/37,309 method calls in test replay). All 178 Avatar
 and 83 Vehicle ClientMethods decode successfully. Method index assignment verified
@@ -330,11 +335,12 @@ correct against real replay data.
 | Ship positions | WORKING | Vehicle → Position (0x0A), Avatar → PlayerOrientation (0x2C) |
 | Ship health | WORKING | Vehicle → health/maxHealth properties |
 | Ship deaths | WORKING | Avatar → receiveVehicleDeath, Vehicle → kill |
-| Player roster | WORKING | Avatar → onArenaStateReceived (pickle) |
+| Player roster | WORKING | Avatar → onArenaStateReceived (pickle), incl. clan_tag/clan_color/crew_id |
+| Ship loadouts | WORKING | onArenaStateReceived → shipConfigDump → ShipConfig (modules, upgrades, signals, camo) |
 | Team scores | WORKING | BattleLogic → teams property (TEAMS_DEF) |
 | Chat messages | WORKING | Avatar → onChatMessage (35/37 = 94.6%, 2 encoding edge cases) |
 | Consumables | WORKING | Vehicle → onConsumableUsed, setConsumables, onConsumableInterrupted |
-| Ribbons | WORKING | Derived from hit events (no network method) |
+| Ribbons | WORKING | Server-authoritative from privateVehicleState.ribbons + derived from hit events |
 | Minimap vision | WORKING | Avatar → updateMinimapVisionInfo (both args) |
 | Artillery/shells | WORKING | Avatar → receiveArtilleryShots, receiveShotKills, receiveShellInfo |
 | Torpedoes | WORKING | Avatar → receiveTorpedoes, receiveTorpedoArmed/Sync/Direction |
@@ -391,6 +397,7 @@ mypy src/
 wowsreplay info replay.wowsreplay
 wowsreplay parse replay.wowsreplay --gamedata ./wows-gamedata/data/scripts_entity/entity_defs
 wowsreplay events replay.wowsreplay --gamedata ./wows-gamedata/data/scripts_entity/entity_defs
+wowsreplay export replay.wowsreplay --gamedata ./wows-gamedata/data/scripts_entity/entity_defs -o replay.json
 
 # Top-level API
 from wows_replay_parser import parse_replay
@@ -398,6 +405,7 @@ replay = parse_replay("battle.wowsreplay", "./wows-gamedata/data/scripts_entity/
 replay.state_at(120.5)           # GameState snapshot
 replay.ship_state(entity_id, t)  # ShipState
 replay.events_of_type(ShotCreatedEvent)
+replay.recording_player_ribbons()  # Server-authoritative ribbons
 ```
 
 ## Gamedata Repo

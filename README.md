@@ -11,12 +11,14 @@ A Python library for parsing World of Warships `.wowsreplay` files with dynamic 
 - Decodes all BigWorld network packets from any `.wowsreplay` file
 - Dynamic schema generation from `.def` XML entity definitions — no manual updates on patches
 - Full entity state history with timestamp-indexed `state_at()` queries
-- Typed event stream: 16 event types covering positions, shots, torpedoes, damage, deaths, cap points, scores, and more
+- Typed event stream: 20 event types covering positions, shots, torpedoes, damage, deaths, cap points, scores, vision, squadrons, ribbons, and more
 - Blowfish ECB decryption + zlib decompression of the packet stream
 - Auto-detection of type-ID to entity-name mapping from live packet data
-- Player roster enrichment from the replay JSON header
+- Player roster enrichment with ship loadouts, clan info, and crew IDs
+- Server-authoritative ribbon extraction for the recording player
+- Structured JSON export with state snapshots
 - No data loss: unrecognized packets produce `RawEvent` rather than being silently dropped
-- CLI with four commands: `info`, `parse`, `events`, `state`
+- CLI with five commands: `info`, `parse`, `events`, `state`, `export`
 
 ---
 
@@ -86,6 +88,11 @@ wowsreplay events battle.wowsreplay \
 wowsreplay state battle.wowsreplay \
     --gamedata ./wows-gamedata/data/scripts_entity/entity_defs \
     --time 120.5
+
+# Export complete replay as structured JSON (with state snapshots)
+wowsreplay export battle.wowsreplay \
+    --gamedata ./wows-gamedata/data/scripts_entity/entity_defs \
+    -o replay.json
 ```
 
 ---
@@ -101,7 +108,7 @@ Top-level entry point. Loads gamedata, decrypts and decodes the replay, builds t
 | Field | Type | Description |
 |---|---|---|
 | `meta` | `dict[str, Any]` | Raw JSON header from the replay file |
-| `players` | `list[PlayerInfo]` | Player roster (name, ship ID, team, relation) |
+| `players` | `list[PlayerInfo]` | Player roster (name, ship, team, loadout, clan) |
 | `map_name` | `str` | Map identifier, e.g. `"spaces/42_Neighbors"` |
 | `game_version` | `str` | Game client version string |
 | `duration` | `float` | Replay length in seconds |
@@ -120,6 +127,12 @@ replay.ship_state(entity_id: int, t: float) -> ShipState
 # Battle-level state (scores, timer, cap points) at timestamp t
 replay.battle_state(t: float) -> BattleState
 
+# Optimized sequential iteration for rendering (O(delta) per frame)
+replay.iter_states(timestamps: list[float]) -> Iterator[GameState]
+
+# Server-authoritative ribbons for the recording player
+replay.recording_player_ribbons() -> list[RibbonEvent]
+
 # Filter events by type
 replay.events_of_type(ShotCreatedEvent) -> list[ShotCreatedEvent]
 
@@ -137,6 +150,12 @@ replay.events_in_range(start: float, end: float) -> list[GameEvent]
 | `team_id` | `int` | Team index |
 | `relation` | `int` | 0=self, 1=ally, 2=enemy |
 | `entity_id` | `int` | In-battle entity ID |
+| `clan_tag` | `str` | Clan abbreviation |
+| `clan_color` | `int` | Clan tag display color as packed RGB (0 = no custom color) |
+| `max_health` | `int` | Ship max health |
+| `is_bot` | `bool` | Whether player is a bot |
+| `ship_config` | `ShipConfig \| None` | Parsed ship loadout (modules, upgrades, signals, camo) |
+| `crew_id` | `int` | GameParams ID of the captain |
 
 ---
 
@@ -147,7 +166,8 @@ All events inherit from `GameEvent(timestamp, entity_id, raw_data)`.
 | Event class | Key fields | Source |
 |---|---|---|
 | `PositionEvent` | `x y z yaw speed is_alive` | Position packet (0x0A) |
-| `DamageEvent` | `target_id damage damage_type ammo_id` | `receiveDamagesOnShip` |
+| `DamageEvent` | `target_id damage damage_type ammo_id attacker_id` | `receiveDamagesOnShip` |
+| `DamageReceivedStatEvent` | `target_id attacker_id damage weapon_type` | `receiveDamageStat` |
 | `DeathEvent` | `victim_id killer_id death_reason` | `kill` / `receiveVehicleDeath` |
 | `ShotEvent` | `owner_id params_id salvo_id shot_count` | `receiveArtilleryShots` |
 | `ShotCreatedEvent` | `shot_id owner_id spawn_x/y/z target_x/y/z speed server_time_left` | Per-shell from salvo |
@@ -158,9 +178,12 @@ All events inherit from `GameEvent(timestamp, entity_id, raw_data)`.
 | `ChatEvent` | `sender_id channel message` | `onChatMessage` |
 | `ConsumableEvent` | `vehicle_id consumable_id consumable_type is_used work_time_left` | `onConsumableUsed` |
 | `AchievementEvent` | `player_id achievement_id` | `onAchievementEarned` |
-| `PotentialDamageEvent` | `attacker_id victim_id agro_points` | Avatar stats methods |
+| `MinimapVisionEvent` | `entity_id x z heading is_visible` | `updateMinimapVisionInfo` |
 | `ScoutingDamageEvent` | `victim_id spotter_id amount weapon_type` | Avatar stats methods |
 | `CapContestEvent` | `cap_index vehicle_id is_entering` | Avatar stats methods |
+| `SquadronEvent` | `squadron_id action owner_id plane_type` | Avatar receive_* squadron methods |
+| `AirSupportEvent` | `vehicle_id params_id position` | `activateAirSupport` |
+| `RibbonEvent` | `ribbon_id ribbon_name count derived` | `privateVehicleState.ribbons` / derived |
 | `PropertyUpdateEvent` | `entity_type property_name value` | Any entity property change |
 | `RawEvent` | `packet_type method_name property_name` | Unmatched packets |
 
@@ -225,8 +248,6 @@ wows-gamedata/
         |
         v
   ReplayReader         (extracts JSON headers, Blowfish ECB decrypt, zlib decompress)
-        |
-  type_id_detector     (auto-maps type indices to entity names from live data)
         |
   PacketDecoder        (12-byte header: payload_size u32 + packet_type u32 + clock f32)
         |       \

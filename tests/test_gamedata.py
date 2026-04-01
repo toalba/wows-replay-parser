@@ -65,7 +65,7 @@ class TestSchemaBuilder:
         builder = SchemaBuilder(aliases, entities)
 
         # Primitives should resolve directly
-        schema = builder.resolve_type("INT32")
+        schema = builder._resolve_type("INT32", in_method=False)
         assert schema is not None
 
         result = schema.parse(b"\x2a\x00\x00\x00")
