@@ -195,7 +195,7 @@ class TestPositionInterpolation:
         assert pos[0] == pytest.approx(50.0)
         assert pos[2] == pytest.approx(50.0)
 
-    def test_position_before_first_returns_first(self) -> None:
+    def test_position_before_first_returns_none(self) -> None:
         tracker = GameStateTracker()
         tracker.process_packet(_make_packet(
             PacketType.POSITION,
@@ -203,8 +203,7 @@ class TestPositionInterpolation:
             position=(50.0, 0.0, 50.0),
         ))
         pos = tracker.position_at(100, 0.0)
-        assert pos is not None
-        assert pos[0] == pytest.approx(50.0)
+        assert pos is None  # No position recorded yet at t=0
 
     def test_position_after_last_returns_last(self) -> None:
         tracker = GameStateTracker()
