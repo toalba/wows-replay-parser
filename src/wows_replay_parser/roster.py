@@ -102,6 +102,7 @@ class PlayerInfo:
     relation: int = 0  # 0=self, 1=ally, 2=enemy
     entity_id: int = 0
     clan_tag: str = ""
+    clan_color: int = 0  # Clan tag display color as packed RGB integer (0 = no custom color)
     max_health: int = 0
     is_bot: bool = False
     ship_config: ShipConfig | None = None  # Parsed loadout from shipConfigDump
@@ -388,6 +389,7 @@ def _match_via_arena_state(
             relation=relation,
             entity_id=entity_id,
             clan_tag=ap.get("clanTag", ""),
+            clan_color=int(ap.get("clanColor", 0)),
             max_health=int(ap.get("maxHealth", 0)),
             is_bot=is_bot,
             ship_config=ship_config,
