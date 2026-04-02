@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from wows_replay_parser.events.models import GameEvent
+from wows_replay_parser.events.models import BattleResultsEvent, GameEvent
 from wows_replay_parser.events.stream import EventStream
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry
 from wows_replay_parser.gamedata.def_loader import DefLoader
@@ -19,7 +19,7 @@ from wows_replay_parser.gamedata.schema_builder import SchemaBuilder
 from wows_replay_parser.packets.decoder import PacketDecoder
 from wows_replay_parser.packets.type_id_detector import detect_type_id_mapping
 from wows_replay_parser.replay.reader import ReplayReader
-from wows_replay_parser.roster import PlayerInfo, build_roster
+from wows_replay_parser.roster import PlayerInfo, build_roster, extract_arena_extras
 from wows_replay_parser.state.tracker import GameStateTracker
 
 _log = logging.getLogger(__name__)
@@ -113,6 +113,18 @@ class ParsedReplay:
     events: list[GameEvent]
     packets: list[Packet]
     _tracker: GameStateTracker = field(repr=False, compare=False)
+    prebattles_info: dict = field(default_factory=dict)
+    observers: list = field(default_factory=list)
+    buildings_info: list = field(default_factory=list)
+    battle_results: dict | None = None
+
+    def camera_at(self, t: float) -> tuple[float, float, float] | None:
+        """Get camera position at time t (bisect lookup)."""
+        return self._tracker.camera_at(t)
+
+    def net_stats_at(self, t: float) -> int | None:
+        """Get raw network quality stat (u32) at time t (bisect lookup)."""
+        return self._tracker.net_stats_at(t)
 
     def state_at(self, t: float) -> GameState:
         """Get full game state snapshot at timestamp t."""
@@ -163,6 +175,30 @@ class ParsedReplay:
         return extract_recording_player_ribbons(
             self._tracker._history, avatar_eid,
         )
+
+    def own_player_vehicle_state(self, t: float) -> dict | None:
+        """Get the recording player's privateVehicleState at time t.
+
+        Returns the full decoded dict (ribbons, damage tallies, etc.)
+        or None if not yet available.  OWN_CLIENT only.
+        """
+        return self._tracker.own_player_vehicle_state(t)
+
+    def spotted_entities_at(self, t: float) -> list | None:
+        """Get the recording player's spotted entities at time t.
+
+        Returns the decoded spottedEntities list, or None if not yet
+        received.  OWN_CLIENT only.
+        """
+        return self._tracker.spotted_entities_at(t)
+
+    def visibility_distances_at(self, t: float) -> dict | None:
+        """Get the recording player's visibility distances at time t.
+
+        Returns the decoded visibilityDistances dict, or None if not
+        yet received.  ALL_CLIENTS property on the Avatar entity.
+        """
+        return self._tracker.visibility_distances_at(t)
 
     def events_of_type(self, cls: type[_T]) -> list[_T]:
         """Filter events by type."""
@@ -293,7 +329,7 @@ def parse_replay(
 
     # Build player roster and inject team_id into tracker
     # teamId is decoded from ENTITY_CREATE inline state data
-    players = build_roster(
+    players, arena_blobs = build_roster(
         replay.meta, tracker, packets=packets, registry=registry,
         gamedata_path=gamedata_path,
     )
@@ -303,8 +339,20 @@ def parse_replay(
                 player.entity_id, "teamId", player.team_id,
             )
 
+    # Extract additional arena state blobs (reuse blobs from build_roster)
+    arena_extras = extract_arena_extras(
+        packets, gamedata_path=gamedata_path, arena_blobs=arena_blobs,
+    )
+
     # Compute duration from max packet timestamp
     duration = max((p.timestamp for p in packets), default=0.0)
+
+    # Extract battle results from events (single 0x22 packet per replay)
+    battle_results: dict | None = None
+    for evt in events:
+        if isinstance(evt, BattleResultsEvent):
+            battle_results = evt.results
+            break
 
     return ParsedReplay(
         meta=replay.meta,
@@ -315,4 +363,8 @@ def parse_replay(
         events=events,
         packets=packets,
         _tracker=tracker,
+        prebattles_info=arena_extras["prebattles_info"],
+        observers=arena_extras["observers"],
+        buildings_info=arena_extras["buildings_info"],
+        battle_results=battle_results,
     )

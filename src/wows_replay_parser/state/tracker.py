@@ -97,6 +97,8 @@ class GameStateTracker:
         self._map_space_id: int | None = None
         self._map_arena_id: int | None = None
         self._map_name: str | None = None
+        # PlayerNetStats (0x1D) timeline: list of (timestamp, raw_u32)
+        self._net_stats: list[tuple[float, int]] = []
 
     def process_packet(self, packet: Packet) -> list[PropertyChange]:
         """Process a decoded packet, updating internal state.
@@ -258,6 +260,12 @@ class GameStateTracker:
                 self._camera_positions.append(
                     (packet.timestamp, packet.camera_position),
                 )
+
+        # PlayerNetStats (0x1D) — store raw network quality metric for timeline queries
+        elif ptype == PacketType.PLAYER_NET_STATS:
+            raw = getattr(packet, "net_stats_raw", None)
+            if raw is not None:
+                self._net_stats.append((packet.timestamp, raw))
 
         # Position update (0x0A), NonVolatilePosition (0x2A — Trap 10),
         # and PlayerOrientation (0x2C — self player's ship position)
@@ -617,6 +625,27 @@ class GameStateTracker:
                         minimap_heading=mm_h,
                         is_detected=mm_det,
                         death_position=death_position,
+                        is_on_forsage=bool(props.get("isOnForsage", False)),
+                        engine_power=int(props.get("enginePower", 0)),
+                        engine_dir=int(props.get("engineDir", 0)),
+                        speed_sign_dir=int(props.get("speedSignDir", 0)),
+                        max_speed=float(props.get("maxServerSpeedRaw", 0)),
+                        rudder_angle=float(props.get("ruddersAngle", 0)),
+                        deep_rudder_angle=float(props.get("deepRuddersAngle", 0)),
+                        selected_weapon=int(props.get("selectedWeapon", 0)),
+                        is_invisible=bool(props.get("isInvisible", False)),
+                        has_active_squadron=bool(props.get("hasActiveMainSquadron", False)),
+                        is_in_rage_mode=bool(props.get("isInRageMode", False)),
+                        respawn_time=float(props.get("respawnTime", 0)),
+                        blocked_controls=int(props.get("blockedControls", 0)),
+                        oil_leak_state=int(props.get("oilLeakState", 0)),
+                        owner=int(props.get("owner", 0)),
+                        regen_crew_hp_limit=float(props.get("regenCrewHpLimit", 0)),
+                        buoyancy=float(props.get("buoyancy", 0)),
+                        air_defense_disp_radius=float(props.get("airDefenseDispRadius", 0)),
+                        weapon_lock_flags=int(props.get("weaponLockFlags", 0)),
+                        target_local_pos=int(props.get("targetLocalPos", 0)),
+                        torpedo_local_pos=int(props.get("torpedoLocalPos", 0)),
                     )
                 elif etype in ("BattleLogic", "BattleEntity"):
                     battle = self._build_battle_state(
@@ -661,6 +690,35 @@ class GameStateTracker:
             if self._entity_types.get(entity_id) in ("BattleLogic", "BattleEntity"):
                 return self._build_battle_state(props, state)
         return BattleState()
+
+    def camera_at(self, t: float) -> tuple[float, float, float] | None:
+        """Get camera position at time t (bisect lookup).
+
+        Returns the most recent camera position recorded at or before t,
+        or None if no camera data is available.
+        """
+        if not self._camera_positions:
+            return None
+        timestamps = [entry[0] for entry in self._camera_positions]
+        idx = bisect_right(timestamps, t)
+        if idx == 0:
+            return None
+        return self._camera_positions[idx - 1][1]
+
+    def net_stats_at(self, t: float) -> int | None:
+        """Get raw network quality stat (u32) at time t (bisect lookup).
+
+        Returns the most recent PLAYER_NET_STATS value recorded at or
+        before t, or None if no data is available.  The packed u32 bitfield
+        format is not fully documented; use raw value for custom analysis.
+        """
+        if not self._net_stats:
+            return None
+        timestamps = [entry[0] for entry in self._net_stats]
+        idx = bisect_right(timestamps, t)
+        if idx == 0:
+            return None
+        return self._net_stats[idx - 1][1]
 
     def position_at(self, entity_id: int, t: float) -> tuple[float, float, float] | None:
         """Interpolate position for entity at time t."""
@@ -836,6 +894,86 @@ class GameStateTracker:
         Returns (position, yaw) or None if not dead / no position cached.
         """
         return self._death_positions.get(entity_id)
+
+    # --- Avatar / OWN_CLIENT helpers ---
+
+    def _find_avatar_eid(self) -> int | None:
+        """Return the entity ID of the Avatar (recording player), or None."""
+        for eid, etype in self._entity_types.items():
+            if etype == "Avatar":
+                return eid
+        return None
+
+    def _avatar_props_at(self, t: float) -> dict[str, Any] | None:
+        """Return the Avatar entity's property dict at time t, or None."""
+        avatar_eid = self._find_avatar_eid()
+        if avatar_eid is None:
+            return None
+        state = self._rebuild_state_at(t)
+        return state.get(avatar_eid)
+
+    def own_player_vehicle_state(self, t: float) -> dict | None:
+        """Get the recording player's privateVehicleState at time t.
+
+        Returns the full decoded dict (ribbons, damage tallies, etc.)
+        or None if the Avatar entity hasn't been created yet or the
+        property has not been received.
+
+        This is an OWN_CLIENT property — only the recording player's
+        Avatar entity carries it.
+        """
+        props = self._avatar_props_at(t)
+        if props is None:
+            return None
+        pvs = props.get("privateVehicleState")
+        if pvs is None:
+            return None
+        # Return a plain dict copy so callers can't mutate internal state.
+        if isinstance(pvs, dict):
+            return dict(pvs)
+        # construct Container (dict subclass) — convert to plain dict,
+        # stripping private keys like '_io'.
+        return {k: v for k, v in pvs.items() if not k.startswith("_")}
+
+    def spotted_entities_at(self, t: float) -> list | None:
+        """Get the recording player's spottedEntities at time t.
+
+        Returns the decoded list of spotted entity records, or None if
+        the property is absent or not yet received.
+
+        This is an OWN_CLIENT property on the Avatar entity.
+        """
+        props = self._avatar_props_at(t)
+        if props is None:
+            return None
+        value = props.get("spottedEntities")
+        if value is None:
+            return None
+        if isinstance(value, list):
+            return list(value)
+        return value
+
+    def visibility_distances_at(self, t: float) -> dict | None:
+        """Get the recording player's visibilityDistances at time t.
+
+        Returns the decoded dict of visibility distance fields, or None
+        if the property is absent or not yet received.
+
+        Note: visibilityDistances has ALL_CLIENTS flag in Avatar.def, so
+        it is visible for all spectators, not only the recording player.
+        """
+        props = self._avatar_props_at(t)
+        if props is None:
+            return None
+        value = props.get("visibilityDistances")
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return dict(value)
+        # construct Container — strip private keys
+        if hasattr(value, "items"):
+            return {k: v for k, v in value.items() if not k.startswith("_")}
+        return value
 
     # --- Private helpers ---
 
@@ -1073,6 +1211,27 @@ class GameStateTracker:
             minimap_heading=minimap_heading,
             is_detected=is_detected,
             death_position=death_position,
+            is_on_forsage=bool(props.get("isOnForsage", False)),
+            engine_power=int(props.get("enginePower", 0)),
+            engine_dir=int(props.get("engineDir", 0)),
+            speed_sign_dir=int(props.get("speedSignDir", 0)),
+            max_speed=float(props.get("maxServerSpeedRaw", 0)),
+            rudder_angle=float(props.get("ruddersAngle", 0)),
+            deep_rudder_angle=float(props.get("deepRuddersAngle", 0)),
+            selected_weapon=int(props.get("selectedWeapon", 0)),
+            is_invisible=bool(props.get("isInvisible", False)),
+            has_active_squadron=bool(props.get("hasActiveMainSquadron", False)),
+            is_in_rage_mode=bool(props.get("isInRageMode", False)),
+            respawn_time=float(props.get("respawnTime", 0)),
+            blocked_controls=int(props.get("blockedControls", 0)),
+            oil_leak_state=int(props.get("oilLeakState", 0)),
+            owner=int(props.get("owner", 0)),
+            regen_crew_hp_limit=float(props.get("regenCrewHpLimit", 0)),
+            buoyancy=float(props.get("buoyancy", 0)),
+            air_defense_disp_radius=float(props.get("airDefenseDispRadius", 0)),
+            weapon_lock_flags=int(props.get("weaponLockFlags", 0)),
+            target_local_pos=int(props.get("targetLocalPos", 0)),
+            torpedo_local_pos=int(props.get("torpedoLocalPos", 0)),
         )
 
     @staticmethod
@@ -1254,6 +1413,9 @@ class GameStateTracker:
             team_start_scores=team_start_scores,
             kill_scoring=kill_scoring,
             hold_scoring=hold_scoring,
+            battle_type=int(bl_props.get("battleType", 0)),
+            duration=int(bl_props.get("duration", 0)),
+            map_border=bl_props.get("mapBorder"),
         )
 
     @staticmethod

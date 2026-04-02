@@ -310,3 +310,596 @@ class RibbonEvent(GameEvent):
     vehicle_id: int = 0
     target_id: int = 0
     derived: bool = True
+
+
+@dataclass
+class BattleResultsEvent(GameEvent):
+    """Post-battle results blob (packet 0x22).
+
+    The ``results`` dict mirrors the raw JSON payload from the server:
+      - ``commonList``       : list[Any]  — 18 battle-level values
+      - ``playersPublicInfo``: dict       — per-player public stats
+      - ``privateDataList``  : list[Any]  — per-player private economics
+      - ``arenaUniqueID``    : int
+      - ``accountDBID``      : int
+    """
+
+    results: dict = field(default_factory=dict)
+
+
+# ── Vehicle combat events ────────────────────────────────────────
+
+
+@dataclass
+class GunFireEvent(GameEvent):
+    """Vehicle.shootOnClient — main battery salvo fired."""
+
+    weapon_type: int = 0
+    gun_bits: int = 0
+
+
+@dataclass
+class SecondaryFireEvent(GameEvent):
+    """Vehicle.shootATBAGuns — secondary battery salvo fired."""
+
+    weapon_type: int = 0
+    gun_bits: int = 0
+
+
+@dataclass
+class GunStateEvent(GameEvent):
+    """Vehicle.syncGun — gun turret state sync."""
+
+    weapon_type: int = 0
+    gun_id: int = 0
+    yaw: float = 0.0
+    pitch: float = 0.0
+    alive: bool = True
+    reload_perc: float = 0.0
+    loaded_ammo: int = 0
+
+
+@dataclass
+class TorpedoTubeStateEvent(GameEvent):
+    """Vehicle.syncTorpedoTube — torpedo tube state sync."""
+
+    gun_id: int = 0
+    yaw: float = 0.0
+    pitch: float = 0.0
+    alive: bool = True
+    reload_perc: float = 0.0
+    state: int = 0
+
+
+@dataclass
+class TorpedoSpreadEvent(GameEvent):
+    """Vehicle.syncTorpedoState — torpedo spread state update."""
+
+    state: int = 0
+
+
+@dataclass
+class AmmoSwitchEvent(GameEvent):
+    """Vehicle.setAmmoForWeapon — ammo type switch for a weapon."""
+
+    weapon_type: int = 0
+    ammo_params_id: int = 0
+    is_reload: bool = False
+
+
+@dataclass
+class WeaponStateSwitchEvent(GameEvent):
+    """Vehicle.onWeaponStateSwitched — weapon state transition."""
+
+    weapon_type: int = 0
+    new_state: int = 0
+
+
+@dataclass
+class TorpedoLaunchEvent(GameEvent):
+    """Vehicle.shootTorpedo — single torpedo launched."""
+
+    id: int = 0
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    id2: int = 0
+    id3: int = 0
+    flag: bool = False
+
+
+@dataclass
+class DepthChargeLaunchEvent(GameEvent):
+    """Vehicle.shootDepthCharge — depth charge dropped."""
+
+    id: int = 0
+    count: int = 0
+
+
+@dataclass
+class GunRotationSyncEvent(GameEvent):
+    """Vehicle.receiveGunSyncRotations — packed gun rotation sync."""
+
+    weapon_type: int = 0
+    gun_directions: Any = None
+
+
+@dataclass
+class ModuleDamageEvent(GameEvent):
+    """Vehicle.receiveHitLocationStateChange — module hit/damage state."""
+
+
+@dataclass
+class WeaponReloadStateEvent(GameEvent):
+    """Vehicle.setReloadingStateForWeapon — weapon reload state."""
+
+    weapon_type: int = 0
+
+
+@dataclass
+class ShipCracksEvent(GameEvent):
+    """Vehicle.syncShipCracks — cosmetic hull crack sync."""
+
+
+@dataclass
+class ShipPhysicsEvent(GameEvent):
+    """Vehicle.syncShipPhysics — ship physics state blob."""
+
+    state_id: int = 0
+
+
+@dataclass
+class ShipDisappearEvent(GameEvent):
+    """Vehicle.startDissapearing — ship disappear animation start."""
+
+
+@dataclass
+class RespawnEvent(GameEvent):
+    """Vehicle.onRespawned — vehicle respawned (e.g. CV planes)."""
+
+    reset_consumables_count: int = 0
+    initial_speed: float = 0.0
+    yaw: float = 0.0
+
+
+@dataclass
+class DamageControlStartEvent(GameEvent):
+    """Vehicle.onCrashCrewEnable — damage control party activated."""
+
+
+@dataclass
+class DamageControlEndEvent(GameEvent):
+    """Vehicle.onCrashCrewDisable — damage control party deactivated."""
+
+
+@dataclass
+class RageModeEvent(GameEvent):
+    """Vehicle.syncRageMode — rage/berserk mode state sync."""
+
+    hit_counter: int = 0
+    state: int = 0
+    state_time_passed: float = 0.0
+
+
+@dataclass
+class MirrorDamageEvent(GameEvent):
+    """Vehicle.receiveMirrorDamage — reflected damage received."""
+
+    damage: float = 0.0
+
+
+# ── Sub-cluster 5a: Consumable events ────────────────────────────
+
+
+@dataclass
+class ConsumableSelectedEvent(GameEvent):
+    """Avatar.onConsumableSelected — consumable slot selected."""
+
+    consumable_type: int = 0
+    is_selected: bool = False
+
+
+@dataclass
+class ConsumableEnabledEvent(GameEvent):
+    """Avatar.onConsumableEnabled — consumable enabled/disabled."""
+
+    consumable_id: int = 0
+    enabled: bool = False
+
+
+@dataclass
+class ConsumablePausedEvent(GameEvent):
+    """Avatar.onConsumablePaused — consumable paused."""
+
+    consumable_type: int = 0
+
+
+# ── Sub-cluster 5b: Avatar combat methods ────────────────────────
+
+
+@dataclass
+class ExplosionEvent(GameEvent):
+    """Avatar.receiveExplosions — explosion effects."""
+
+
+@dataclass
+class MissileLaunchEvent(GameEvent):
+    """Avatar.receiveMissile — missile launched."""
+
+
+@dataclass
+class MissileWaypointEvent(GameEvent):
+    """Avatar.updateMissileWaypoints — missile waypoint update."""
+
+    shot_id: int = 0
+
+
+@dataclass
+class MissileDamageEvent(GameEvent):
+    """Avatar.receiveMissileDamage — missile damage dealt."""
+
+    shot_id: int = 0
+    damager_id: int = 0
+    damage: float = 0.0
+
+
+@dataclass
+class MissileImpactEvent(GameEvent):
+    """Avatar.receiveMissileKill — missile impact/kill."""
+
+    shot_id: int = 0
+
+
+@dataclass
+class PlaneProjectileEvent(GameEvent):
+    """Avatar.receivePlaneProjectilePack — plane projectile pack."""
+
+
+@dataclass
+class SkipBombEvent(GameEvent):
+    """Avatar.receivePlaneSkipBombPacks — skip bomb packs."""
+
+
+@dataclass
+class RocketEvent(GameEvent):
+    """Avatar.receivePlaneRocketPacks — rocket packs."""
+
+
+@dataclass
+class DepthChargeEvent(GameEvent):
+    """Avatar.receiveDepthChargesPacks — depth charge packs."""
+
+
+@dataclass
+class LaserBeamEvent(GameEvent):
+    """Avatar.receiveLaserBeams — laser beam effects."""
+
+
+@dataclass
+class TracerPositionEvent(GameEvent):
+    """Avatar.updateOwnerlessTracersPosition — ownerless tracer position update."""
+
+
+@dataclass
+class TracerStartEvent(GameEvent):
+    """Avatar.beginOwnerlessTracers — ownerless tracer start."""
+
+
+@dataclass
+class TracerEndEvent(GameEvent):
+    """Avatar.endOwnerlessTracers — ownerless tracer end."""
+
+
+@dataclass
+class TorpedoSyncEvent(GameEvent):
+    """Avatar.receiveTorpedoSynchronization — torpedo synchronization."""
+
+
+@dataclass
+class TorpedoArmedEvent(GameEvent):
+    """Avatar.receiveTorpedoArmed — torpedo armed state change."""
+
+    torpedo_id: int = 0
+    armed_state: int = 0
+
+
+# ── Sub-cluster 5c: Submarine/sonar ──────────────────────────────
+
+
+@dataclass
+class SonarPingEvent(GameEvent):
+    """Avatar.receivePingerShot — sonar ping fired."""
+
+    weapon_type: int = 0
+    gun_id: int = 0
+    yaw: float = 0.0
+
+
+@dataclass
+class SonarResetEvent(GameEvent):
+    """Avatar.resetPinger — sonar pinger reset."""
+
+    weapon_type: int = 0
+
+
+@dataclass
+class SonarHitEvent(GameEvent):
+    """Avatar.onPingerWaveEnemyHit — sonar wave hit an enemy."""
+
+
+@dataclass
+class SonarWaveReceivedEvent(GameEvent):
+    """Avatar.receiveWaveFromEnemy — sonar wave received from enemy."""
+
+
+@dataclass
+class SonarHitUpdateEvent(GameEvent):
+    """Avatar.updateWaveEnemyHit — sonar enemy hit update."""
+
+
+@dataclass
+class SonarDetectionEvent(GameEvent):
+    """Avatar.updateInvisibleWavedPoint — sonar detection of invisible target."""
+
+
+@dataclass
+class HydrophoneTargetEvent(GameEvent):
+    """Avatar.addSubmarineHydrophoneTargets — hydrophone target added."""
+
+
+@dataclass
+class SubSurfacingEvent(GameEvent):
+    """Avatar.syncSurfacingTime — submarine surfacing time sync."""
+
+    time: int = 0
+
+
+# ── Sub-cluster 5d: AA/priority sector ───────────────────────────
+
+
+@dataclass
+class AASectorEvent(GameEvent):
+    """Avatar.onPrioritySectorSet — AA priority sector set."""
+
+    sector_id: int = 0
+    reinforcement_progress: float = 0.0
+
+
+@dataclass
+class AASectorQueueEvent(GameEvent):
+    """Avatar.onNextPrioritySectorSet — next AA priority sector queued."""
+
+    sector_id: int = 0
+
+
+@dataclass
+class AAAuraStateEvent(GameEvent):
+    """Avatar.updateOwnerlessAuraState — AA aura state update."""
+
+
+@dataclass
+class AirDefenseStateEvent(GameEvent):
+    """Avatar.setAirDefenseState — air defense state set."""
+
+
+# ── Sub-cluster 5e: Squadron detailed events ─────────────────────
+
+
+@dataclass
+class SquadronSpawnEvent(GameEvent):
+    """Avatar.receive_addSquadron — squadron spawned (detailed)."""
+
+
+@dataclass
+class SquadronUpdateDetailEvent(GameEvent):
+    """Avatar.receive_updateSquadron — squadron updated (detailed)."""
+
+
+@dataclass
+class SquadronStateChangeEvent(GameEvent):
+    """Avatar.receive_changeState — squadron state changed."""
+
+
+@dataclass
+class SquadronHealthEvent(GameEvent):
+    """Avatar.receive_squadronHealth — squadron health update."""
+
+
+@dataclass
+class SquadronPlaneHealthEvent(GameEvent):
+    """Avatar.receive_squadronPlanesHealth — squadron plane health update."""
+
+
+@dataclass
+class PlaneDeathEvent(GameEvent):
+    """Avatar.receive_planeDeath — individual plane death."""
+
+
+@dataclass
+class SquadronVisibilityEvent(GameEvent):
+    """Avatar.receive_squadronVisibilityChanged — squadron visibility changed."""
+
+
+@dataclass
+class SquadronStopManeuverEvent(GameEvent):
+    """Avatar.receive_stopManeuvering — squadron stop maneuvering."""
+
+
+@dataclass
+class SquadronWaypointResetEvent(GameEvent):
+    """Avatar.receive_resetWaypoints — squadron waypoints reset."""
+
+
+@dataclass
+class SquadronRefreshEvent(GameEvent):
+    """Avatar.receive_refresh — squadron refresh."""
+
+
+# ── Sub-cluster 5f: Game state methods ───────────────────────────
+
+
+@dataclass
+class GameRoomStateEvent(GameEvent):
+    """Avatar.onGameRoomStateChanged — game room state changed (pickle blob)."""
+
+
+@dataclass
+class CooldownUpdateEvent(GameEvent):
+    """Avatar.updateCoolDown — cooldown update."""
+
+
+@dataclass
+class PreBattleUpdateEvent(GameEvent):
+    """Avatar.updatePreBattlesInfo — pre-battle info update."""
+
+
+@dataclass
+class ConnectedEvent(GameEvent):
+    """Avatar.onConnected — client connected."""
+
+
+@dataclass
+class PreBattleEnterEvent(GameEvent):
+    """Avatar.onEnterPreBattle — entering pre-battle phase."""
+
+
+@dataclass
+class AvatarInfoEvent(GameEvent):
+    """Avatar.receiveAvatarInfo — avatar info received."""
+
+
+@dataclass
+class PlayerDataEvent(GameEvent):
+    """Avatar.receivePlayerData — player data received."""
+
+
+@dataclass
+class PlayerSpawnedEvent(GameEvent):
+    """Avatar.onNewPlayerSpawned — new player spawned."""
+
+
+@dataclass
+class BattleEndEvent(GameEvent):
+    """Avatar.onBattleEnd — battle ended."""
+
+
+@dataclass
+class ShutdownTimeEvent(GameEvent):
+    """Avatar.onShutdownTime — shutdown timer update."""
+
+    shutdown_type: int = 0
+    time_remaining: float = 0.0
+    flags: int = 0
+
+
+@dataclass
+class UniqueSkillsEvent(GameEvent):
+    """Avatar.setUniqueSkills — unique skills set."""
+
+
+@dataclass
+class ChatHistoryEvent(GameEvent):
+    """Avatar.receiveChatHistory — chat history received."""
+
+
+@dataclass
+class WorldStateReceivedEvent(GameEvent):
+    """Avatar.onWorldStateReceived — world state received."""
+
+
+@dataclass
+class PreBattleGrantsEvent(GameEvent):
+    """Avatar.changePreBattleGrants — pre-battle grants changed."""
+
+    grants: int = 0
+
+
+@dataclass
+class UniqueTriggerEvent(GameEvent):
+    """Avatar.uniqueTriggerActivated — unique trigger activated."""
+
+
+@dataclass
+class WaveResetEvent(GameEvent):
+    """Avatar.resetResettableWaveEnemyHits — resettable wave enemy hits reset."""
+
+
+# ── Sub-cluster 5g: Vehicle one-shot methods ─────────────────────
+
+
+@dataclass
+class OwnerChangedEvent(GameEvent):
+    """Vehicle.onOwnerChanged — vehicle owner changed."""
+
+    owner_id: int = 0
+    is_owner: bool = False
+
+
+@dataclass
+class ConsumablesSetEvent(GameEvent):
+    """Vehicle.setConsumables — consumables set (pickle blob)."""
+
+
+@dataclass
+class HitLocationsInitEvent(GameEvent):
+    """Vehicle.receiveHitLocationsInitialState — hit locations initial state (blob)."""
+
+
+@dataclass
+class TeleportEvent(GameEvent):
+    """Vehicle.teleport — vehicle teleport."""
+
+
+# ── Vehicle property events ─────────────────────────────────────
+
+
+@dataclass
+class SkillActivationEvent(GameEvent):
+    """Vehicle.triggeredSkillsData — commander skill activation state changed.
+
+    ``active_skills`` is the raw bitmask decoded from the pickled BLOB.
+    Each bit corresponds to one commander skill slot being active (1) or
+    inactive (0).  The exact bit-to-skill mapping depends on the ship's
+    skill configuration and is not further decoded here.
+    """
+
+    vehicle_id: int = 0
+    active_skills: Any = None  # decoded value from PICKLED_BLOB (usually int bitmask)
+
+
+# ── Packet-level events (non-entity-method) ──────────────────────
+
+
+@dataclass
+class EntityLeaveEvent(GameEvent):
+    """Entity left the game world (packet 0x04)."""
+
+
+@dataclass
+class CruiseStateEvent(GameEvent):
+    """Cruise state update (packet 0x32)."""
+
+    state: int = 0
+    value: int = 0
+
+
+@dataclass
+class WeaponLockEvent(GameEvent):
+    """Weapon lock state (packet 0x30)."""
+
+    flags: int = 0
+    target_id: int = 0
+
+
+@dataclass
+class CameraModeEvent(GameEvent):
+    """Camera mode change (packet 0x27)."""
+
+    mode: int = 0
+
+
+@dataclass
+class ShotTrackingEvent(GameEvent):
+    """Shot tracking update (packet 0x33)."""
+
+    tracking_entity: int = 0
+    weapon_id: int = 0
+    value: int = 0

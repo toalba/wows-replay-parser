@@ -7,7 +7,7 @@ import json
 import logging
 import pickle
 import struct
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -107,6 +107,19 @@ class PlayerInfo:
     is_bot: bool = False
     ship_config: ShipConfig | None = None  # Parsed loadout from shipConfigDump
     crew_id: int = 0  # GameParams ID of the captain (from crewParams[0])
+    prebattle_id: int = 0
+    is_prebattle_owner: bool = False
+    clan_id: int = 0
+    avatar_id: int = 0
+    realm: str = ""
+    skin_id: int = 0
+    ship_params_id: int = 0
+    is_leaver: bool = False
+    is_connected: bool = False
+    is_hidden: bool = False
+    dog_tag: Any = None
+    player_mode: dict = field(default_factory=dict)
+    ship_components: dict = field(default_factory=dict)
 
 
 def build_roster(
@@ -115,31 +128,34 @@ def build_roster(
     packets: list[Packet] | None = None,
     registry: EntityRegistry | None = None,
     gamedata_path: Path | None = None,
-) -> list[PlayerInfo]:
+) -> tuple[list[PlayerInfo], list[bytes] | None]:
     """Build player roster from JSON header + onArenaStateReceived.
 
     Primary approach: decode onArenaStateReceived pickle blobs to get
     the authoritative entity_id <-> account_id mapping.
     Fallback: order-based matching within teams (broken for non-self players).
+
+    Returns (roster, arena_blobs) — arena_blobs can be passed to
+    extract_arena_extras() to avoid re-scanning packets.
     """
     vehicles = meta.get("vehicles", [])
     if not vehicles:
-        return []
+        return [], None
 
     # Load key maps from gamedata (or fallback to hardcoded)
     player_key_map, bot_key_map = _load_key_maps(gamedata_path)
 
     # Try arena state matching first
     if packets:
-        arena_roster = _match_via_arena_state(
+        arena_roster, blobs = _match_via_arena_state(
             vehicles, packets, player_key_map, bot_key_map,
         )
         if arena_roster:
-            return arena_roster
+            return arena_roster, blobs
 
     # Fallback to old order-based matching
     log.warning("onArenaStateReceived not found, falling back to order-based matching")
-    return _match_by_order_fallback(meta, tracker, packets, registry)
+    return _match_by_order_fallback(meta, tracker, packets, registry), None
 
 
 class _SafeUnpickler(pickle.Unpickler):
@@ -197,8 +213,8 @@ def _decode_arena_players(
 
 def _extract_arena_blobs(
     packet: Packet,
-) -> tuple[bytes, bytes] | None:
-    """Extract playersStates and botsStates from onArenaStateReceived.
+) -> list[bytes] | None:
+    """Extract all pickle blobs from onArenaStateReceived.
 
     The payload format after the 12-byte method header (eid+mid+len):
       arenaUniqueId(INT64, 8) + teamBuildTypeId(INT8, 1) +
@@ -211,7 +227,8 @@ def _extract_arena_blobs(
 
     Since pickle boundaries can be tricky, we locate each pickle by
     scanning for protocol 2 headers (\\x80\\x02) and deserializing.
-    The second pickle (index 1) is playersStates, the third is botsStates.
+    Returns up to 5 pickle blobs (indices 0–4). Index 1 is playersStates,
+    index 2 is botsStates. Returns None if fewer than 2 pickles are found.
     """
     raw = packet.raw_payload
     if len(raw) < 100:
@@ -237,12 +254,11 @@ def _extract_arena_blobs(
             pos = idx + 1
 
     # pickles[0] = preBattlesInfo, [1] = playersStates, [2] = botsStates
+    # pickles[3] = observersState, [4] = buildingsInfo
     if len(pickles) < 2:
         return None
 
-    players_blob = pickles[1]
-    bots_blob = pickles[2] if len(pickles) > 2 else b""
-    return players_blob, bots_blob
+    return pickles
 
 
 def _find_arena_state_packet(
@@ -278,7 +294,7 @@ def _find_arena_state_packet(
         blobs = _extract_arena_blobs(p)
         if blobs is None:
             continue
-        players_blob, _ = blobs
+        players_blob = blobs[1] if len(blobs) > 1 else b""
         if not players_blob:
             continue
         # Verify it's valid pickle containing a list of player tuples
@@ -307,20 +323,23 @@ def _match_via_arena_state(
     packets: list[Packet],
     player_key_map: dict[int, str],
     bot_key_map: dict[int, str],
-) -> list[PlayerInfo] | None:
+) -> tuple[list[PlayerInfo] | None, list[bytes] | None]:
     """Match players using onArenaStateReceived pickle data.
 
-    Returns None if the packet wasn't found or decoding failed.
+    Returns (roster, blobs) — roster is None if the packet wasn't found
+    or decoding failed.  blobs is the raw extracted pickle list (reusable
+    by extract_arena_extras to avoid a second scan).
     """
     arena_packet = _find_arena_state_packet(packets)
     if arena_packet is None:
-        return None
+        return None, None
 
     blobs = _extract_arena_blobs(arena_packet)
     if blobs is None:
-        return None
+        return None, None
 
-    players_blob, bots_blob = blobs
+    players_blob = blobs[1]
+    bots_blob = blobs[2] if len(blobs) > 2 else b""
 
     arena_players = _decode_arena_players(players_blob, player_key_map)
     arena_bots: list[dict[str, Any]] = []
@@ -329,7 +348,7 @@ def _match_via_arena_state(
 
     if not arena_players and not arena_bots:
         log.warning("onArenaStateReceived found but decoded 0 players")
-        return None
+        return None, blobs
 
     log.info(
         "Decoded onArenaStateReceived: %d players, %d bots",
@@ -394,9 +413,106 @@ def _match_via_arena_state(
             is_bot=is_bot,
             ship_config=ship_config,
             crew_id=int(crew_id) if crew_id else 0,
+            prebattle_id=int(ap.get("prebattleId", 0)),
+            is_prebattle_owner=bool(ap.get("isPreBattleOwner", False)),
+            clan_id=int(ap.get("clanID", 0)),
+            avatar_id=int(ap.get("avatarId", 0)),
+            realm=ap.get("realm", ""),
+            skin_id=int(ap.get("skinId", 0)),
+            ship_params_id=int(ap.get("shipParamsId", 0)),
+            is_leaver=bool(ap.get("isLeaver", False)),
+            is_connected=bool(ap.get("isConnected", False)),
+            is_hidden=bool(ap.get("isHidden", False)),
+            dog_tag=ap.get("dogTag"),
+            player_mode=ap.get("playerMode") or {},
+            ship_components=ap.get("shipComponents") or {},
         ))
 
-    return roster
+    return roster, blobs
+
+
+def extract_arena_extras(
+    packets: list[Packet],
+    gamedata_path: Path | None = None,
+    arena_blobs: list[bytes] | None = None,
+) -> dict[str, Any]:
+    """Extract prebattles_info, observers, and buildings_info from onArenaStateReceived.
+
+    If arena_blobs is provided (from build_roster), reuses them to avoid
+    re-scanning packets.  Otherwise finds and extracts blobs from scratch.
+
+    Returns a dict with keys 'prebattles_info' (dict), 'observers' (list),
+    'buildings_info' (list). All default to empty if the blob is missing or
+    cannot be decoded.
+    """
+    result: dict[str, Any] = {
+        "prebattles_info": {},
+        "observers": [],
+        "buildings_info": [],
+    }
+
+    blobs = arena_blobs
+    if blobs is None:
+        arena_packet = _find_arena_state_packet(packets)
+        if arena_packet is None:
+            return result
+        blobs = _extract_arena_blobs(arena_packet)
+    if blobs is None:
+        return result
+
+    # Use version-aware key map (falls back to hardcoded if gamedata unavailable)
+    player_key_map, _ = _load_key_maps(gamedata_path)
+
+    if len(blobs) > 0:
+        try:
+            prebattles = _safe_pickle_loads(blobs[0])
+            if isinstance(prebattles, dict):
+                result["prebattles_info"] = prebattles
+        except Exception:
+            log.debug("Failed to decode prebattles_info blob", exc_info=True)
+
+    if len(blobs) > 3:
+        try:
+            observers_raw = _safe_pickle_loads(blobs[3])
+            if isinstance(observers_raw, list) and observers_raw:
+                first = observers_raw[0]
+                first_item_is_tuple = (
+                    isinstance(first, (list, tuple))
+                    and first
+                    and isinstance(first[0], (list, tuple))
+                )
+                if first_item_is_tuple:
+                    # Same (int_key, value) tuple structure as playersStates
+                    observers = []
+                    for entry in observers_raw:
+                        if not isinstance(entry, (list, tuple)):
+                            continue
+                        player: dict[str, Any] = {}
+                        for item in entry:
+                            if not isinstance(item, (list, tuple)) or len(item) < 2:
+                                continue
+                            name = player_key_map.get(item[0])
+                            if name is not None:
+                                player[name] = item[1]
+                        if player:
+                            observers.append(player)
+                    result["observers"] = observers
+                else:
+                    result["observers"] = observers_raw
+            elif isinstance(observers_raw, list):
+                result["observers"] = observers_raw
+        except Exception:
+            log.debug("Failed to decode observersState blob", exc_info=True)
+
+    if len(blobs) > 4:
+        try:
+            buildings = _safe_pickle_loads(blobs[4])
+            if isinstance(buildings, list):
+                result["buildings_info"] = buildings
+        except Exception:
+            log.debug("Failed to decode buildingsInfo blob", exc_info=True)
+
+    return result
 
 
 # ── Fallback: order-based matching (old broken approach) ───────────

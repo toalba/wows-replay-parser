@@ -691,14 +691,23 @@ class PacketDecoder:
                                         pass
 
                         if isinstance(target, list):
-                            target[idx1:idx2] = [value]
+                            if value is None:
+                                # Delete operation: remove elements [idx1:idx2]
+                                del target[idx1:idx2]
+                            else:
+                                target[idx1:idx2] = [value]
                             packet.property_value = current
                     elif isinstance(target, list):
                         try:
-                            target[int(field_name)] = value
+                            idx = int(field_name)
+                        except ValueError:
+                            idx = None
+                        if idx is not None:
+                            # Grow list with None padding if index is out of range
+                            while len(target) <= idx:
+                                target.append(None)
+                            target[idx] = value
                             packet.property_value = current
-                        except (ValueError, IndexError):
-                            pass
                     elif isinstance(target, dict):
                         target[field_name] = value
                         packet.property_value = current
@@ -707,15 +716,15 @@ class PacketDecoder:
                 # tracked array to the inferred min length. We do this AFTER
                 # apply so the intermediate dicts + array exist in _current.
                 if _spec_info is not None:
-                    arr_path, _candidate_len = _spec_info
-                    # Infer min array length from the decoded indices
-                    # and grow the tracked array so subsequent packets
-                    # use the correct arr_len in the normal path.
-                    min_len = self._infer_min_array_len(result)
-                    if min_len > 0:
-                        self._grow_tracked_array(
-                            entity_id, prop_def.name, arr_path, min_len,
-                        )
+                    _path, _field, _val = result
+                    # Skip grow for delete ops — the array shrank
+                    if not (_val is None and _field.startswith("__slice__")):
+                        arr_path, _candidate_len = _spec_info
+                        min_len = self._infer_min_array_len(result)
+                        if min_len > 0:
+                            self._grow_tracked_array(
+                                entity_id, prop_def.name, arr_path, min_len,
+                            )
 
     @staticmethod
     def _infer_min_array_len(
@@ -811,6 +820,25 @@ class PacketDecoder:
 
         if cont == 0:
             # Apply update at this level
+            if kind == "leaf":
+                # Leaf node reached via array element descent.
+                # The remaining bytes are the value itself.
+                remaining = reader.remaining_bytes()
+                if not remaining:
+                    return None
+                leaf_type = type_info.get("type_name", "BLOB")
+                schema = self._schema._resolve_type(leaf_type, in_method=True)
+                if schema is None:
+                    return None
+                try:
+                    # Leaf updates use the last path segment as the field name
+                    value = schema.parse(remaining)
+                    if path:
+                        return (path[:-1], path[-1], value)
+                    return None
+                except Exception:
+                    return None
+
             if kind == "dict":
                 fields = type_info["fields"]
                 bits = _bits_for_count(len(fields))
@@ -846,7 +874,9 @@ class PacketDecoder:
                     idx2 = reader.read_bits(bits)
                     remaining = reader.remaining_bytes()
                     if not remaining:
-                        return None
+                        # Empty remaining = delete operation: remove elements [idx1:idx2]
+                        # Use sentinel None value — caller handles as target[idx1:idx2] = []
+                        return (path, f"__slice__{idx1}__{idx2}", None)
                     elem_type = type_info.get("element_type", "BLOB")
                     schema = self._schema._resolve_type(elem_type, in_method=True)
                     if schema is None:
@@ -974,6 +1004,12 @@ class PacketDecoder:
         is_slice: bool,
     ) -> tuple[tuple[list[str], str, Any], tuple[tuple[str, ...], int]] | None:
         """Try decoding with progressively larger array lengths.
+
+        Only tries larger lengths because smaller lengths produce false
+        positives: the fewer index bits get consumed by the value parser,
+        producing silently wrong values that still pass schema validation.
+        Arrays that shrink (e.g. atbaTargets when AA targets leave range)
+        are handled by delete operations on the normal path, not here.
 
         Returns (result, (array_path, candidate_len)) on success, None on failure.
         The caller is responsible for growing the tracked array AFTER applying
@@ -1205,11 +1241,41 @@ class PacketDecoder:
         """
         BattleResults (0x22, >=12.6) — post-battle statistics blob.
 
-        Payload: length(u32) + JSON/pickle data.
-        The first 4 bytes appear to be a length prefix, followed by
-        a JSON blob with battle results.
+        Payload layout (verified against test replay):
+          bytes 0-3  : uint32 LE — length of JSON blob that follows
+          bytes 4-N  : UTF-8 JSON string (N = length_prefix)
+
+        Top-level keys: buildings, arenaUniqueID, privateDataList,
+        commonList, accountDBID, keepUntilTime, playersPublicInfo,
+        preBattlesInfo.
         """
-        packet.battle_results_data = packet.raw_payload
+        import json as _json
+
+        payload = packet.raw_payload
+        if len(payload) < 4:
+            packet.battle_results_data = payload
+            return
+
+        length_prefix = struct.unpack_from("<I", payload)[0]
+        json_start = 4
+        json_end = json_start + length_prefix
+
+        if json_end > len(payload):
+            # Malformed: use what we have
+            json_end = len(payload)
+
+        try:
+            packet.battle_results_data = _json.loads(
+                payload[json_start:json_end]
+            )
+        except Exception:
+            # Fall back to raw bytes so callers can inspect
+            log.debug(
+                "BattleResults: JSON decode failed, storing raw bytes "
+                "(payload first 16: %s)",
+                payload[:16].hex(),
+            )
+            packet.battle_results_data = payload
 
     # ── Useful per-tick handlers ─────────────────────────────────────
 
@@ -1246,10 +1312,23 @@ class PacketDecoder:
         GunMarker (0x18) — aiming state, 52 bytes per tick.
 
         Written alongside Camera every tick. Contains gun direction data.
+
+        Exploratory decode: bytes 0-11 are likely the gun marker world
+        position as 3×f32 (x, y, z).  Stored in camera_position for
+        easy access; full raw bytes kept in gun_marker_data.
         """
         if len(packet.raw_payload) < 52:
             return
         packet.gun_marker_data = packet.raw_payload
+        # Attempt to decode first 12 bytes as (x, y, z) world position.
+        # Values in [−40000, 40000] are typical WoWS map coordinates; use
+        # as a plausibility check before exposing via camera_position.
+        try:
+            x, y, z = struct.unpack_from("<fff", packet.raw_payload, 0)
+            if all(abs(v) < 1e6 and not (v != v) for v in (x, y, z)):
+                packet.gun_marker_position = (x, y, z)
+        except struct.error:
+            pass
 
     def _handle_server_timestamp(self, packet: Packet) -> None:
         """
@@ -1282,8 +1361,15 @@ class PacketDecoder:
         pass  # No payload
 
     def _handle_player_net_stats(self, packet: Packet) -> None:
-        """PlayerNetStats (0x1D) — network quality metrics (u32 packed)."""
-        pass  # 4 bytes packed network stats, not needed for gameplay
+        """PlayerNetStats (0x1D) — network quality metrics (u32 packed).
+
+        Payload: stats(u32) — packed bitfield of network quality counters.
+        The exact bitfield layout is not fully documented; stored as-is for
+        timeline queries via net_stats_at().
+        """
+        if len(packet.raw_payload) < 4:
+            return
+        packet.net_stats_raw = struct.unpack("<I", packet.raw_payload[:4])[0]
 
     def _handle_camera_mode(self, packet: Packet) -> None:
         """

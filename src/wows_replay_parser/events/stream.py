@@ -19,26 +19,113 @@ if TYPE_CHECKING:
     from wows_replay_parser.state.tracker import GameStateTracker
 
 from wows_replay_parser.events.models import (
+    AASectorEvent,
+    AASectorQueueEvent,
+    AAAuraStateEvent,
     AchievementEvent,
+    AirDefenseStateEvent,
     AirSupportEvent,
+    AmmoSwitchEvent,
+    AvatarInfoEvent,
+    BattleEndEvent,
+    BattleResultsEvent,
+    CameraModeEvent,
     CapContestEvent,
     CapturePointUpdateEvent,
     ChatEvent,
+    ChatHistoryEvent,
+    ConnectedEvent,
+    ConsumableEnabledEvent,
     ConsumableEvent,
+    ConsumablePausedEvent,
+    ConsumableSelectedEvent,
+    ConsumablesSetEvent,
+    CooldownUpdateEvent,
+    CruiseStateEvent,
+    DamageControlEndEvent,
+    DamageControlStartEvent,
     DamageEvent,
     DamageReceivedStatEvent,
     DeathEvent,
+    DepthChargeEvent,
+    DepthChargeLaunchEvent,
+    EntityLeaveEvent,
+    ExplosionEvent,
     GameEvent,
+    GameRoomStateEvent,
+    GunFireEvent,
+    GunRotationSyncEvent,
+    GunStateEvent,
+    HitLocationsInitEvent,
+    HydrophoneTargetEvent,
+    LaserBeamEvent,
     MinimapVisionEvent,
+    MirrorDamageEvent,
+    MissileDamageEvent,
+    MissileImpactEvent,
+    MissileLaunchEvent,
+    MissileWaypointEvent,
+    ModuleDamageEvent,
+    OwnerChangedEvent,
+    PlaneDeathEvent,
+    PlaneProjectileEvent,
+    PlayerDataEvent,
+    PlayerSpawnedEvent,
     PositionEvent,
+    PreBattleEnterEvent,
+    PreBattleGrantsEvent,
+    PreBattleUpdateEvent,
     PropertyUpdateEvent,
+    RageModeEvent,
     RawEvent,
+    RespawnEvent,
+    RocketEvent,
     ScoreUpdateEvent,
     ScoutingDamageEvent,
+    SecondaryFireEvent,
+    ShipCracksEvent,
+    ShipDisappearEvent,
+    ShipPhysicsEvent,
+    ShutdownTimeEvent,
+    SkipBombEvent,
+    ShotTrackingEvent,
+    SonarDetectionEvent,
+    SonarHitEvent,
+    SonarHitUpdateEvent,
+    SonarPingEvent,
+    SonarResetEvent,
+    SonarWaveReceivedEvent,
     ShotCreatedEvent,
     ShotDestroyedEvent,
     SquadronEvent,
+    SquadronHealthEvent,
+    SquadronPlaneHealthEvent,
+    SquadronRefreshEvent,
+    SquadronSpawnEvent,
+    WeaponLockEvent,
+    SquadronStateChangeEvent,
+    SquadronStopManeuverEvent,
+    SquadronUpdateDetailEvent,
+    SquadronVisibilityEvent,
+    SquadronWaypointResetEvent,
+    SubSurfacingEvent,
+    TeleportEvent,
+    TorpedoArmedEvent,
     TorpedoCreatedEvent,
+    TorpedoLaunchEvent,
+    TorpedoSpreadEvent,
+    TorpedoSyncEvent,
+    TorpedoTubeStateEvent,
+    TracerEndEvent,
+    TracerPositionEvent,
+    TracerStartEvent,
+    UniqueTriggerEvent,
+    UniqueSkillsEvent,
+    SkillActivationEvent,
+    WaveResetEvent,
+    WeaponReloadStateEvent,
+    WeaponStateSwitchEvent,
+    WorldStateReceivedEvent,
 )
 from wows_replay_parser.packets.types import Packet, PacketType
 
@@ -515,6 +602,397 @@ def _air_support_deactivate(pkt: Packet) -> AirSupportEvent:
     )
 
 
+# ── Combat factory functions ─────────────────────────────────────
+
+
+def _gun_fire(pkt: Packet) -> GunFireEvent:
+    """shootOnClient(arg0: weapon_type, arg1: gun_bits)."""
+    args = pkt.method_args or {}
+    return GunFireEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        weapon_type=int(_get(args, "arg0", 0)),
+        gun_bits=int(_get(args, "arg1", 0)),
+        raw_data=args,
+    )
+
+
+def _secondary_fire(pkt: Packet) -> SecondaryFireEvent:
+    """shootATBAGuns(arg0: weapon_type, arg1: gun_bits)."""
+    args = pkt.method_args or {}
+    return SecondaryFireEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        weapon_type=int(_get(args, "arg0", 0)),
+        gun_bits=int(_get(args, "arg1", 0)),
+        raw_data=args,
+    )
+
+
+def _gun_state(pkt: Packet) -> GunStateEvent:
+    """syncGun(arg0: weapon_type, arg1: gun_id, arg2: yaw, arg3: pitch, arg4: alive, arg5: reload_perc, arg6: loaded_ammo)."""
+    args = pkt.method_args or {}
+    return GunStateEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        weapon_type=int(_get(args, "arg0", 0)),
+        gun_id=int(_get(args, "arg1", 0)),
+        yaw=float(_get(args, "arg2", 0.0)),
+        pitch=float(_get(args, "arg3", 0.0)),
+        alive=bool(_get(args, "arg4", True)),
+        reload_perc=float(_get(args, "arg5", 0.0)),
+        loaded_ammo=int(_get(args, "arg6", 0)),
+        raw_data=args,
+    )
+
+
+def _torpedo_tube_state(pkt: Packet) -> TorpedoTubeStateEvent:
+    """syncTorpedoTube(arg0: gun_id, arg1: yaw, arg2: pitch, arg3: alive, arg4: reload_perc, arg5: state)."""
+    args = pkt.method_args or {}
+    return TorpedoTubeStateEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        gun_id=int(_get(args, "arg0", 0)),
+        yaw=float(_get(args, "arg1", 0.0)),
+        pitch=float(_get(args, "arg2", 0.0)),
+        alive=bool(_get(args, "arg3", True)),
+        reload_perc=float(_get(args, "arg4", 0.0)),
+        state=int(_get(args, "arg5", 0)),
+        raw_data=args,
+    )
+
+
+def _torpedo_spread(pkt: Packet) -> TorpedoSpreadEvent:
+    """syncTorpedoState(arg0: state)."""
+    args = pkt.method_args or {}
+    return TorpedoSpreadEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        state=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+def _ammo_switch(pkt: Packet) -> AmmoSwitchEvent:
+    """setAmmoForWeapon(arg0: weapon_type, arg1: ammo_params_id, arg2: is_reload)."""
+    args = pkt.method_args or {}
+    return AmmoSwitchEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        weapon_type=int(_get(args, "arg0", 0)),
+        ammo_params_id=int(_get(args, "arg1", 0)),
+        is_reload=bool(_get(args, "arg2", False)),
+        raw_data=args,
+    )
+
+
+def _weapon_state_switch(pkt: Packet) -> WeaponStateSwitchEvent:
+    """onWeaponStateSwitched(arg0: weapon_type, arg1: new_state)."""
+    args = pkt.method_args or {}
+    return WeaponStateSwitchEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        weapon_type=int(_get(args, "arg0", 0)),
+        new_state=int(_get(args, "arg1", 0)),
+        raw_data=args,
+    )
+
+
+def _torpedo_launch(pkt: Packet) -> TorpedoLaunchEvent:
+    """shootTorpedo(arg0: id, arg1: VECTOR3 position, arg2: id2, arg3: id3, arg4: flag)."""
+    args = pkt.method_args or {}
+    pos = args.get("arg1") or {}
+    if isinstance(pos, dict):
+        px = float(pos.get("x", 0))
+        py = float(pos.get("y", 0))
+        pz = float(pos.get("z", 0))
+    else:
+        px, py, pz = 0.0, 0.0, 0.0
+    return TorpedoLaunchEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        id=int(_get(args, "arg0", 0)),
+        position=(px, py, pz),
+        id2=int(_get(args, "arg2", 0)),
+        id3=int(_get(args, "arg3", 0)),
+        flag=bool(_get(args, "arg4", False)),
+        raw_data=args,
+    )
+
+
+def _depth_charge_launch(pkt: Packet) -> DepthChargeLaunchEvent:
+    """shootDepthCharge(arg0: id, arg1: count)."""
+    args = pkt.method_args or {}
+    return DepthChargeLaunchEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        id=int(_get(args, "arg0", 0)),
+        count=int(_get(args, "arg1", 0)),
+        raw_data=args,
+    )
+
+
+def _gun_rotation_sync(pkt: Packet) -> GunRotationSyncEvent:
+    """receiveGunSyncRotations(arg0: weapon_type, arg1: gun_directions)."""
+    args = pkt.method_args or {}
+    return GunRotationSyncEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        weapon_type=int(_get(args, "arg0", 0)),
+        gun_directions=_get(args, "arg1"),
+        raw_data=args,
+    )
+
+
+def _respawn(pkt: Packet) -> RespawnEvent:
+    """onRespawned(arg0: reset_consumables_count, arg1: initial_speed, arg2: yaw)."""
+    args = pkt.method_args or {}
+    return RespawnEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        reset_consumables_count=int(_get(args, "arg0", 0)),
+        initial_speed=float(_get(args, "arg1", 0.0)),
+        yaw=float(_get(args, "arg2", 0.0)),
+        raw_data=args,
+    )
+
+
+def _rage_mode(pkt: Packet) -> RageModeEvent:
+    """syncRageMode(arg0: hit_counter, arg1: state, arg2: state_time_passed)."""
+    args = pkt.method_args or {}
+    return RageModeEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        hit_counter=int(_get(args, "arg0", 0)),
+        state=int(_get(args, "arg1", 0)),
+        state_time_passed=float(_get(args, "arg2", 0.0)),
+        raw_data=args,
+    )
+
+
+def _weapon_reload_state(pkt: Packet) -> WeaponReloadStateEvent:
+    """setReloadingStateForWeapon(arg0: weapon_type, arg1: state_blob)."""
+    args = pkt.method_args or {}
+    return WeaponReloadStateEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        weapon_type=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+def _ship_physics(pkt: Packet) -> ShipPhysicsEvent:
+    """syncShipPhysics(arg0: state_id, arg1: blob)."""
+    args = pkt.method_args or {}
+    return ShipPhysicsEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        state_id=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+def _mirror_damage(pkt: Packet) -> MirrorDamageEvent:
+    """receiveMirrorDamage(arg0: damage)."""
+    args = pkt.method_args or {}
+    return MirrorDamageEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        damage=float(_get(args, "arg0", 0.0)),
+        raw_data=args,
+    )
+
+
+# ── Phase 5 factory functions ────────────────────────────────────
+
+# 5a: Consumable events
+
+def _consumable_selected(pkt: Packet) -> ConsumableSelectedEvent:
+    """onConsumableSelected(arg0: consumable_type, arg1: is_selected)."""
+    args = pkt.method_args or {}
+    return ConsumableSelectedEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        consumable_type=int(_get(args, "arg0", 0)),
+        is_selected=bool(_get(args, "arg1", False)),
+        raw_data=args,
+    )
+
+
+def _consumable_enabled(pkt: Packet) -> ConsumableEnabledEvent:
+    """onConsumableEnabled(arg0: consumable_id, arg1: enabled)."""
+    args = pkt.method_args or {}
+    return ConsumableEnabledEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        consumable_id=int(_get(args, "arg0", 0)),
+        enabled=bool(_get(args, "arg1", False)),
+        raw_data=args,
+    )
+
+
+def _consumable_paused(pkt: Packet) -> ConsumablePausedEvent:
+    """onConsumablePaused(arg0: consumable_type)."""
+    args = pkt.method_args or {}
+    return ConsumablePausedEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        consumable_type=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+# 5b: Avatar combat methods (small factories only — rest use _generic)
+
+def _missile_waypoint(pkt: Packet) -> MissileWaypointEvent:
+    """updateMissileWaypoints(arg0: shot_id, ...)."""
+    args = pkt.method_args or {}
+    return MissileWaypointEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        shot_id=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+def _missile_damage(pkt: Packet) -> MissileDamageEvent:
+    """receiveMissileDamage(arg0: shot_id, arg1: damager_id, arg2: damage)."""
+    args = pkt.method_args or {}
+    return MissileDamageEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        shot_id=int(_get(args, "arg0", 0)),
+        damager_id=int(_get(args, "arg1", 0)),
+        damage=float(_get(args, "arg2", 0.0)),
+        raw_data=args,
+    )
+
+
+def _missile_impact(pkt: Packet) -> MissileImpactEvent:
+    """receiveMissileKill(arg0: shot_id, ...)."""
+    args = pkt.method_args or {}
+    return MissileImpactEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        shot_id=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+def _torpedo_armed(pkt: Packet) -> TorpedoArmedEvent:
+    """receiveTorpedoArmed(arg0: torpedo_id, arg1: armed_state)."""
+    args = pkt.method_args or {}
+    return TorpedoArmedEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        torpedo_id=int(_get(args, "arg0", 0)),
+        armed_state=int(_get(args, "arg1", 0)),
+        raw_data=args,
+    )
+
+
+# 5c: Submarine/sonar
+
+def _sonar_ping(pkt: Packet) -> SonarPingEvent:
+    """receivePingerShot(arg0: weapon_type, arg1: gun_id, arg2: yaw)."""
+    args = pkt.method_args or {}
+    return SonarPingEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        weapon_type=int(_get(args, "arg0", 0)),
+        gun_id=int(_get(args, "arg1", 0)),
+        yaw=float(_get(args, "arg2", 0.0)),
+        raw_data=args,
+    )
+
+
+def _sonar_reset(pkt: Packet) -> SonarResetEvent:
+    """resetPinger(arg0: weapon_type)."""
+    args = pkt.method_args or {}
+    return SonarResetEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        weapon_type=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+def _sub_surfacing(pkt: Packet) -> SubSurfacingEvent:
+    """syncSurfacingTime(arg0: time)."""
+    args = pkt.method_args or {}
+    return SubSurfacingEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        time=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+# 5d: AA/priority sector
+
+def _aa_sector(pkt: Packet) -> AASectorEvent:
+    """onPrioritySectorSet(arg0: sector_id, arg1: reinforcement_progress)."""
+    args = pkt.method_args or {}
+    return AASectorEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        sector_id=int(_get(args, "arg0", 0)),
+        reinforcement_progress=float(_get(args, "arg1", 0.0)),
+        raw_data=args,
+    )
+
+
+def _aa_sector_queue(pkt: Packet) -> AASectorQueueEvent:
+    """onNextPrioritySectorSet(arg0: sector_id)."""
+    args = pkt.method_args or {}
+    return AASectorQueueEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        sector_id=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+# 5f: Game state methods (small factories only — rest use _generic)
+
+def _shutdown_time(pkt: Packet) -> ShutdownTimeEvent:
+    """onShutdownTime(arg0: shutdown_type, arg1: time_remaining, arg2: flags)."""
+    args = pkt.method_args or {}
+    return ShutdownTimeEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        shutdown_type=int(_get(args, "arg0", 0)),
+        time_remaining=float(_get(args, "arg1", 0.0)),
+        flags=int(_get(args, "arg2", 0)),
+        raw_data=args,
+    )
+
+
+def _pre_battle_grants(pkt: Packet) -> PreBattleGrantsEvent:
+    """changePreBattleGrants(arg0: grants)."""
+    args = pkt.method_args or {}
+    return PreBattleGrantsEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        grants=int(_get(args, "arg0", 0)),
+        raw_data=args,
+    )
+
+
+# 5g: Vehicle one-shot methods
+
+def _owner_changed(pkt: Packet) -> OwnerChangedEvent:
+    """onOwnerChanged(arg0: owner_id, arg1: is_owner)."""
+    args = pkt.method_args or {}
+    return OwnerChangedEvent(
+        timestamp=pkt.timestamp,
+        entity_id=pkt.entity_id,
+        owner_id=int(_get(args, "arg0", 0)),
+        is_owner=bool(_get(args, "arg1", False)),
+        raw_data=args,
+    )
+
+
 # Method name → factory function
 _METHOD_FACTORIES: dict[str, Callable[[Packet], GameEvent | list[GameEvent]]] = {
     "receiveVehicleDeath": _death_from_receive_vehicle_death,
@@ -540,7 +1018,101 @@ _METHOD_FACTORIES: dict[str, Callable[[Packet], GameEvent | list[GameEvent]]] = 
     # Air support
     "activateAirSupport": _air_support_activate,
     "deactivateAirSupport": _air_support_deactivate,
+    # Combat
+    "shootOnClient": _gun_fire,
+    "shootATBAGuns": _secondary_fire,
+    "syncGun": _gun_state,
+    "syncTorpedoTube": _torpedo_tube_state,
+    "syncTorpedoState": _torpedo_spread,
+    "setAmmoForWeapon": _ammo_switch,
+    "onWeaponStateSwitched": _weapon_state_switch,
+    "shootTorpedo": _torpedo_launch,
+    "shootDepthCharge": _depth_charge_launch,
+    "receiveGunSyncRotations": _gun_rotation_sync,
+    "receiveHitLocationStateChange": _generic(ModuleDamageEvent),
+    "setReloadingStateForWeapon": _weapon_reload_state,
+    "syncShipCracks": _generic(ShipCracksEvent),
+    "syncShipPhysics": _ship_physics,
+    "startDissapearing": _generic(ShipDisappearEvent),
+    "onRespawned": _respawn,
+    "onCrashCrewEnable": _generic(DamageControlStartEvent),
+    "onCrashCrewDisable": _generic(DamageControlEndEvent),
+    "syncRageMode": _rage_mode,
+    "receiveMirrorDamage": _mirror_damage,
+    # Consumables
+    "onConsumableSelected": _consumable_selected,
+    "onConsumableEnabled": _consumable_enabled,
+    "onConsumablePaused": _consumable_paused,
+    # Avatar combat
+    "receiveExplosions": _generic(ExplosionEvent),
+    "receiveMissile": _generic(MissileLaunchEvent),
+    "updateMissileWaypoints": _missile_waypoint,
+    "receiveMissileDamage": _missile_damage,
+    "receiveMissileKill": _missile_impact,
+    "receivePlaneProjectilePack": _generic(PlaneProjectileEvent),
+    "receivePlaneSkipBombPacks": _generic(SkipBombEvent),
+    "receivePlaneRocketPacks": _generic(RocketEvent),
+    "receiveDepthChargesPacks": _generic(DepthChargeEvent),
+    "receiveLaserBeams": _generic(LaserBeamEvent),
+    "updateOwnerlessTracersPosition": _generic(TracerPositionEvent),
+    "beginOwnerlessTracers": _generic(TracerStartEvent),
+    "endOwnerlessTracers": _generic(TracerEndEvent),
+    "receiveTorpedoSynchronization": _generic(TorpedoSyncEvent),
+    "receiveTorpedoArmed": _torpedo_armed,
+    # Submarine
+    "receivePingerShot": _sonar_ping,
+    "resetPinger": _sonar_reset,
+    "onPingerWaveEnemyHit": _generic(SonarHitEvent),
+    "receiveWaveFromEnemy": _generic(SonarWaveReceivedEvent),
+    "updateWaveEnemyHit": _generic(SonarHitUpdateEvent),
+    "updateInvisibleWavedPoint": _generic(SonarDetectionEvent),
+    "addSubmarineHydrophoneTargets": _generic(HydrophoneTargetEvent),
+    "syncSurfacingTime": _sub_surfacing,
+    # AA
+    "onPrioritySectorSet": _aa_sector,
+    "onNextPrioritySectorSet": _aa_sector_queue,
+    "updateOwnerlessAuraState": _generic(AAAuraStateEvent),
+    "setAirDefenseState": _generic(AirDefenseStateEvent),
+    # Squadrons
+    "receive_addSquadron": _generic(SquadronSpawnEvent),
+    "receive_updateSquadron": _generic(SquadronUpdateDetailEvent),
+    "receive_changeState": _generic(SquadronStateChangeEvent),
+    "receive_squadronHealth": _generic(SquadronHealthEvent),
+    "receive_squadronPlanesHealth": _generic(SquadronPlaneHealthEvent),
+    "receive_planeDeath": _generic(PlaneDeathEvent),
+    "receive_squadronVisibilityChanged": _generic(SquadronVisibilityEvent),
+    "receive_stopManeuvering": _generic(SquadronStopManeuverEvent),
+    "receive_resetWaypoints": _generic(SquadronWaypointResetEvent),
+    "receive_refresh": _generic(SquadronRefreshEvent),
+    # Game state
+    "onGameRoomStateChanged": _generic(GameRoomStateEvent),
+    "updateCoolDown": _generic(CooldownUpdateEvent),
+    "updatePreBattlesInfo": _generic(PreBattleUpdateEvent),
+    "onConnected": _generic(ConnectedEvent),
+    "onEnterPreBattle": _generic(PreBattleEnterEvent),
+    "receiveAvatarInfo": _generic(AvatarInfoEvent),
+    "receivePlayerData": _generic(PlayerDataEvent),
+    "onNewPlayerSpawned": _generic(PlayerSpawnedEvent),
+    "onBattleEnd": _generic(BattleEndEvent),
+    "onShutdownTime": _shutdown_time,
+    "setUniqueSkills": _generic(UniqueSkillsEvent),
+    "receiveChatHistory": _generic(ChatHistoryEvent),
+    "onWorldStateReceived": _generic(WorldStateReceivedEvent),
+    "changePreBattleGrants": _pre_battle_grants,
+    "uniqueTriggerActivated": _generic(UniqueTriggerEvent),
+    "resetResettableWaveEnemyHits": _generic(WaveResetEvent),
+    # Vehicle one-shot
+    "onOwnerChanged": _owner_changed,
+    "setConsumables": _generic(ConsumablesSetEvent),
+    "receiveHitLocationsInitialState": _generic(HitLocationsInitEvent),
+    "teleport": _generic(TeleportEvent),
 }
+
+
+_NOISE_METHODS: frozenset[str] = frozenset({
+    "onCheckGamePing",
+    "onCheckCellPing",
+})
 
 
 _AMMO_TYPE_MAP: dict[str, str] = {
@@ -716,6 +1288,22 @@ class EventStream:
                 result.extend(
                     self._score_events(packet)
                 )
+            # Vehicle.triggeredSkillsData → SkillActivationEvent
+            if (
+                entity_type == "Vehicle"
+                and packet.property_name == "triggeredSkillsData"
+                and packet.property_value is not None
+            ):
+                result.append(SkillActivationEvent(
+                    timestamp=packet.timestamp,
+                    entity_id=packet.entity_id,
+                    vehicle_id=packet.entity_id,
+                    active_skills=packet.property_value,
+                    raw_data={
+                        "property_name": "triggeredSkillsData",
+                        "active_skills": packet.property_value,
+                    },
+                ))
             return result
 
         # Method call packets
@@ -729,6 +1317,8 @@ class EventStream:
                 if isinstance(out, list):
                     return out
                 return [out]
+            if packet.method_name in _NOISE_METHODS:
+                return []
             # Unknown method → RawEvent
             return [RawEvent(
                 timestamp=packet.timestamp,
@@ -736,6 +1326,60 @@ class EventStream:
                 packet_type=int(packet.type),
                 method_name=packet.method_name or "",
                 raw_data=packet.method_args or {},
+            )]
+
+        # BattleResults (0x22) — post-battle statistics
+        elif packet.type == PacketType.BATTLE_RESULTS:
+            data = getattr(packet, "battle_results_data", None)
+            if isinstance(data, dict):
+                return [BattleResultsEvent(
+                    timestamp=packet.timestamp,
+                    entity_id=packet.entity_id,
+                    results=data,
+                )]
+            return []
+
+        # EntityLeave (0x04) — entity left Area of Interest
+        elif packet.type == PacketType.ENTITY_LEAVE:
+            return [EntityLeaveEvent(
+                timestamp=packet.timestamp,
+                entity_id=packet.entity_id,
+            )]
+
+        # CruiseState (0x32) — cruise control state update
+        elif packet.type == PacketType.CRUISE_STATE:
+            return [CruiseStateEvent(
+                timestamp=packet.timestamp,
+                entity_id=packet.entity_id,
+                state=getattr(packet, "cruise_state", None) or 0,
+                value=getattr(packet, "cruise_value", None) or 0,
+            )]
+
+        # SetWeaponLock (0x30) — weapon lock state
+        elif packet.type == PacketType.SET_WEAPON_LOCK:
+            return [WeaponLockEvent(
+                timestamp=packet.timestamp,
+                entity_id=packet.entity_id,
+                flags=getattr(packet, "weapon_lock_flags", None) or 0,
+                target_id=getattr(packet, "weapon_lock_target", None) or 0,
+            )]
+
+        # CameraMode (0x27) — camera mode change
+        elif packet.type == PacketType.CAMERA_MODE:
+            return [CameraModeEvent(
+                timestamp=packet.timestamp,
+                entity_id=packet.entity_id,
+                mode=getattr(packet, "camera_mode", None) or 0,
+            )]
+
+        # ShotTracking (0x33) — shot tracking update
+        elif packet.type == PacketType.SHOT_TRACKING:
+            return [ShotTrackingEvent(
+                timestamp=packet.timestamp,
+                entity_id=packet.entity_id,
+                tracking_entity=getattr(packet, "shot_tracking_entity", None) or 0,
+                weapon_id=getattr(packet, "shot_tracking_weapon", None) or 0,
+                value=getattr(packet, "shot_tracking_value", None) or 0,
             )]
 
         # All other packet types (entity creation, camera, etc.)

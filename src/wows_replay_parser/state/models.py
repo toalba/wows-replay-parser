@@ -39,6 +39,27 @@ class ShipState:
     is_detected: bool = False  # whether ship is visible on minimap
     # Death position cache (Trap 13)
     death_position: tuple[float, float, float] | None = None
+    is_on_forsage: bool = False
+    engine_power: int = 0
+    engine_dir: int = 0
+    speed_sign_dir: int = 0
+    max_speed: float = 0.0
+    rudder_angle: float = 0.0
+    deep_rudder_angle: float = 0.0
+    selected_weapon: int = 0
+    is_invisible: bool = False
+    has_active_squadron: bool = False
+    is_in_rage_mode: bool = False
+    respawn_time: float = 0.0
+    blocked_controls: int = 0
+    oil_leak_state: int = 0
+    owner: int = 0
+    regen_crew_hp_limit: float = 0.0
+    buoyancy: float = 0.0
+    air_defense_disp_radius: float = 0.0
+    weapon_lock_flags: int = 0
+    target_local_pos: int = 0
+    torpedo_local_pos: int = 0
 
 
 @dataclass
@@ -96,6 +117,9 @@ class BattleState:
     team_start_scores: dict[int, int] = field(default_factory=dict)
     kill_scoring: list[KillScoring] = field(default_factory=list)
     hold_scoring: list[HoldScoring] = field(default_factory=list)
+    battle_type: int = 0
+    duration: int = 0
+    map_border: dict | None = None
 
 
 @dataclass

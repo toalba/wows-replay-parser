@@ -99,12 +99,13 @@ class Packet:
 
     # GunMarker (0x18)
     gun_marker_data: bytes | None = None
+    gun_marker_position: tuple[float, float, float] | None = None
 
     # ServerTimestamp (0x0F)
     server_time: float | None = None
 
-    # BattleResults (0x22)
-    battle_results_data: bytes | None = None
+    # BattleResults (0x22) — decoded dict on success, raw bytes on failure
+    battle_results_data: dict[str, Any] | bytes | None = None
 
     # CruiseState (0x32)
     cruise_state: int | None = None
@@ -121,6 +122,9 @@ class Packet:
     shot_tracking_entity: int | None = None
     shot_tracking_weapon: int | None = None
     shot_tracking_value: int | None = None
+
+    # PlayerNetStats (0x1D)
+    net_stats_raw: int | None = None
 
     # Metadata
     entity_type: str | None = None  # e.g. "Avatar", "Vehicle"
