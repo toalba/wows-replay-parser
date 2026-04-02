@@ -150,17 +150,28 @@ def compute_effective_reloads(
     return result
 
 
+_sc_cache: dict[str, dict | None] = {}
+
+
 def _load_base_reloads(
     gamedata_root: Path, ship_id: int,
 ) -> dict[int, float]:
     """Load base reload times from ship_consumables.json."""
     sc_path = gamedata_root / "data" / "ship_consumables.json"
-    if not sc_path.exists():
-        logger.warning("ship_consumables.json not found at %s", sc_path)
-        return {}
+    cache_key = str(sc_path)
 
-    with open(sc_path) as f:
-        sc_data = json.load(f)
+    if cache_key in _sc_cache:
+        sc_data = _sc_cache[cache_key]
+        if sc_data is None:
+            return {}
+    elif not sc_path.exists():
+        logger.warning("ship_consumables.json not found at %s", sc_path)
+        _sc_cache[cache_key] = None
+        return {}
+    else:
+        with open(sc_path) as f:
+            sc_data = json.load(f)
+        _sc_cache[cache_key] = sc_data
 
     ship_entry = sc_data.get(str(ship_id))
     if not ship_entry:
