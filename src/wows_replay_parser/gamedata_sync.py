@@ -67,6 +67,43 @@ def get_current_gamedata_version(gamedata_root: Path) -> str | None:
     return None
 
 
+def _find_closest_tag(gamedata_root: Path, target_build: int) -> str | None:
+    """Find the closest version tag to target_build.
+
+    Prefers the nearest tag that doesn't exceed the target (same or older patch).
+    Falls back to the nearest newer tag if no older one exists.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "tag", "-l", "v*"],
+            cwd=gamedata_root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            return None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+    tags: list[tuple[int, str]] = []
+    for line in result.stdout.splitlines():
+        tag = line.strip()
+        build_str = tag.lstrip("v")
+        if build_str.isdigit():
+            tags.append((int(build_str), tag))
+
+    if not tags:
+        return None
+
+    # Prefer closest tag <= target, else closest tag > target
+    older = [(b, t) for b, t in tags if b <= target_build]
+    if older:
+        return max(older, key=lambda x: x[0])[1]
+    newer = [(b, t) for b, t in tags if b > target_build]
+    return min(newer, key=lambda x: x[0])[1] if newer else None
+
+
 def sync_gamedata(
     gamedata_root: Path,
     replay_version: str,
@@ -190,10 +227,28 @@ def sync_gamedata(
         log.info("Gamedata updated to %s", tag_name)
         return True
     except subprocess.CalledProcessError:
+        log.warning("Tag %s not found, looking for closest tag...", tag_name)
+        closest = _find_closest_tag(gamedata_root, int(replay_build))
+        if closest:
+            try:
+                subprocess.run(
+                    ["git", "checkout", closest],
+                    cwd=gamedata_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    check=True,
+                )
+                log.info(
+                    "Exact tag %s not found, using closest: %s",
+                    tag_name, closest,
+                )
+                return True
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+                pass
         log.warning(
-            "Tag %s not found in gamedata repo. "
-            "The gamedata pipeline may not have run for this version yet.",
-            tag_name,
+            "No suitable tag found for build %s in gamedata repo.",
+            replay_build,
         )
         return False
     except subprocess.TimeoutExpired:
