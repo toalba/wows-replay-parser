@@ -38,7 +38,7 @@ def get_current_gamedata_version(gamedata_root: Path) -> str | None:
             cwd=gamedata_root,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
         )
         if result.returncode == 0:
             tag = result.stdout.strip()  # e.g., "v12116141"
@@ -53,7 +53,7 @@ def get_current_gamedata_version(gamedata_root: Path) -> str | None:
             cwd=gamedata_root,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
         )
         if result.returncode == 0:
             # Commit messages look like "Update game data: 12116141"
@@ -139,7 +139,7 @@ def sync_gamedata(
             cwd=gamedata_root,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=30,
         )
         if result.returncode == 0 and result.stdout.strip():
             log.warning(
@@ -148,9 +148,12 @@ def sync_gamedata(
                 gamedata_root,
             )
             return False
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        log.error("Git not available: %s", e)
+    except FileNotFoundError:
+        log.error("Git is not installed or not on PATH")
         return False
+    except subprocess.TimeoutExpired:
+        log.warning("Git status check timed out — skipping dirty check")
+        # Proceed anyway; checkout will fail if truly dirty
 
     # Fetch latest tags
     try:
