@@ -141,13 +141,20 @@ def sync_gamedata(
             text=True,
             timeout=30,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            log.warning(
-                "Gamedata repo has uncommitted changes, refusing to checkout. "
-                "Commit or discard changes in %s first.",
-                gamedata_root,
-            )
-            return False
+        if result.returncode == 0:
+            # Only tracked modifications block checkout (M/A/D/R/C),
+            # untracked files (??) don't prevent git checkout.
+            dirty = [
+                line for line in result.stdout.splitlines()
+                if line and not line.startswith("??")
+            ]
+            if dirty:
+                log.warning(
+                    "Gamedata repo has uncommitted changes, refusing to checkout. "
+                    "Commit or discard changes in %s first.",
+                    gamedata_root,
+                )
+                return False
     except FileNotFoundError:
         log.error("Git is not installed or not on PATH")
         return False
