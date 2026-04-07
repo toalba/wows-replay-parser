@@ -67,11 +67,16 @@ def get_current_gamedata_version(gamedata_root: Path) -> str | None:
     return None
 
 
-def _find_closest_tag(gamedata_root: Path, target_build: int) -> str | None:
-    """Find the closest version tag to target_build.
+def _find_closest_tag(
+    gamedata_root: Path,
+    target_build: int,
+) -> str | None:
+    """Find the closest version tag to *target_build*.
 
-    Prefers the nearest tag that doesn't exceed the target (same or older patch).
-    Falls back to the nearest newer tag if no older one exists.
+    Selection strategy (in priority order):
+    1. Exact match  — ``v{target_build}``
+    2. Smallest absolute build-ID delta among all tags.
+       Ties prefer the older build (less likely to reference new-only fields).
     """
     try:
         result = subprocess.run(
@@ -96,12 +101,18 @@ def _find_closest_tag(gamedata_root: Path, target_build: int) -> str | None:
     if not tags:
         return None
 
-    # Prefer closest tag <= target, else closest tag > target
-    older = [(b, t) for b, t in tags if b <= target_build]
-    if older:
-        return max(older, key=lambda x: x[0])[1]
-    newer = [(b, t) for b, t in tags if b > target_build]
-    return min(newer, key=lambda x: x[0])[1] if newer else None
+    # Exact hit — fast path
+    for build, tag in tags:
+        if build == target_build:
+            return tag
+
+    # Pick the tag with the smallest absolute build-ID delta.
+    # On ties, prefer the older build (less likely to reference new-only fields).
+    best = min(
+        tags,
+        key=lambda bt: (abs(bt[0] - target_build), bt[0] > target_build),
+    )
+    return best[1]
 
 
 def sync_gamedata(
@@ -239,9 +250,12 @@ def sync_gamedata(
                     timeout=120,
                     check=True,
                 )
+                closest_build = closest.lstrip("v")
+                delta = int(closest_build) - int(replay_build) if closest_build.isdigit() else "?"
                 log.info(
-                    "Exact tag %s not found, using closest: %s",
+                    "Exact tag %s not found, using closest: %s (delta: %s%s)",
                     tag_name, closest,
+                    "+" if isinstance(delta, int) and delta > 0 else "", delta,
                 )
                 return True
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
