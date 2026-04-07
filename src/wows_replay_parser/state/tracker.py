@@ -392,10 +392,15 @@ class GameStateTracker:
                 if self._own_vehicle_id is not None:
                     vehicle_props = self._current.get(self._own_vehicle_id, {})
                     team_id = int(vehicle_props.get("teamId", 0))
+                # Preserve params_id from receive_addMinimapSquadron if it
+                # already arrived (both fire at the same timestamp).
+                existing = self._aircraft_latest(plane_id)
+                params_id = existing.params_id if existing and existing.params_id else 0
                 self._aircraft_log.append((packet.timestamp, plane_id, AircraftState(
                     plane_id=plane_id,
                     squadron_type="airstrike",
-                    team_id=team_id,
+                    team_id=team_id or (existing.team_id if existing else 0),
+                    params_id=params_id,
                     x=float(pos.get("x", 0)) if isinstance(pos, dict) else 0.0,
                     z=float(pos.get("z", 0)) if isinstance(pos, dict) else 0.0,
                 )))
