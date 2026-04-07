@@ -353,7 +353,7 @@ correct against real replay data.
 | Torpedo tubes | WORKING | Vehicle → syncTorpedoTube, syncTorpedoState |
 | Weapon switching | WORKING | Vehicle → setAmmoForWeapon, shootOnClient, shootATBAGuns |
 | Squadrons | WORKING | Avatar → 16 receive_* methods (add/remove/update/health/death/state) |
-| Air support | WORKING | Avatar → activateAirSupport, deactivateAirSupport |
+| Air support | WORKING | Avatar → activateAirSupport, deactivateAirSupport (params_id preserved from receive_addMinimapSquadron) |
 | Game room state | WORKING | Avatar → onGameRoomStateChanged (pickle, 88 updates/game) |
 | Arena state | WORKING | Avatar → onArenaStateReceived (pickle, full player roster) |
 | Battle end | WORKING | Avatar → onBattleEnd |
