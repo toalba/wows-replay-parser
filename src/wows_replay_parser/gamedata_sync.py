@@ -132,6 +132,26 @@ def sync_gamedata(
         replay_build,
     )
 
+    # Check for uncommitted changes — refuse to checkout if dirty
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=gamedata_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            log.warning(
+                "Gamedata repo has uncommitted changes, refusing to checkout. "
+                "Commit or discard changes in %s first.",
+                gamedata_root,
+            )
+            return False
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        log.error("Git not available: %s", e)
+        return False
+
     # Fetch latest tags
     try:
         subprocess.run(
@@ -160,42 +180,12 @@ def sync_gamedata(
         log.info("Gamedata updated to %s", tag_name)
         return True
     except subprocess.CalledProcessError:
-        # Tag might not exist — try pulling latest instead
         log.warning(
-            "Tag %s not found. Pulling latest...", tag_name,
+            "Tag %s not found in gamedata repo. "
+            "The gamedata pipeline may not have run for this version yet.",
+            tag_name,
         )
-        try:
-            subprocess.run(
-                ["git", "checkout", "main"],
-                cwd=gamedata_root,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=True,
-            )
-            subprocess.run(
-                ["git", "pull"],
-                cwd=gamedata_root,
-                capture_output=True,
-                text=True,
-                timeout=120,
-                check=True,
-            )
-            # Check if latest now matches
-            new_build = get_current_gamedata_version(gamedata_root)
-            if new_build == replay_build:
-                log.info("Gamedata updated to build %s", replay_build)
-                return True
-            log.warning(
-                "Latest gamedata is build %s, but replay needs %s. "
-                "The gamedata repo may not have this version yet.",
-                new_build,
-                replay_build,
-            )
-            return False
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            log.error("Failed to pull latest: %s", e)
-            return False
+        return False
     except subprocess.TimeoutExpired:
         log.error("Checkout timed out for %s", tag_name)
         return False
