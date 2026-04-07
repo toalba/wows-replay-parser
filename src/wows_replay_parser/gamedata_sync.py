@@ -12,7 +12,7 @@ from pathlib import Path  # noqa: TC003 — used at runtime in function signatur
 
 log = logging.getLogger(__name__)
 
-GAMEDATA_REPO_URL = "https://github.com/toalba/wows-gamedata.git"
+GAMEDATA_REPO_URL = "git@github.com:toalba/wows-gamedata.git"
 
 
 def extract_build_id(game_version: str) -> str | None:
