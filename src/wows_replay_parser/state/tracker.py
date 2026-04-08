@@ -1396,7 +1396,7 @@ class GameStateTracker:
         for entity_id, props in all_state.items():
             if self._entity_types.get(entity_id) != "InteractiveZone":
                 continue
-            if entity_id in self._weather_zone_ids or entity_id in self._buff_zone_ids:
+            if entity_id in self._weather_zone_ids:
                 continue
             cs_raw = props.get("componentsState", {})
             cap_logic = _container_get(cs_raw, "captureLogic") or {}
