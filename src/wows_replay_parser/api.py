@@ -118,6 +118,11 @@ class ParsedReplay:
     buildings_info: list = field(default_factory=list)
     battle_results: dict | None = None
 
+    @property
+    def tracker(self) -> GameStateTracker:
+        """Public access to the game state tracker."""
+        return self._tracker
+
     def camera_at(self, t: float) -> tuple[float, float, float] | None:
         """Get camera position at time t (bisect lookup)."""
         return self._tracker.camera_at(t)
@@ -164,11 +169,7 @@ class ParsedReplay:
         from wows_replay_parser.ribbons import extract_recording_player_ribbons
 
         # Find Avatar entity ID
-        avatar_eid = None
-        for eid, etype in self._tracker._entity_types.items():
-            if etype == "Avatar":
-                avatar_eid = eid
-                break
+        avatar_eid = self.tracker.get_avatar_entity_id()
         if avatar_eid is None:
             return []
 

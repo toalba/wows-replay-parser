@@ -1003,6 +1003,61 @@ class GameStateTracker:
             return {k: v for k, v in value.items() if not k.startswith("_")}
         return value
 
+    def get_entities_by_type(self, type_name: str) -> list[int]:
+        """Return all entity IDs of the given type (e.g. 'BattleLogic', 'SmokeScreen')."""
+        return [eid for eid, etype in self._entity_types.items() if etype == type_name]
+
+    def get_entity_leave_time(self, entity_id: int) -> float | None:
+        """Return the timestamp when entity left the Area of Interest, or None."""
+        return self._entity_leave_times.get(entity_id)
+
+    def get_consumable_activations(self, entity_id: int) -> list[tuple[float, int, float]]:
+        """Return consumable activation timeline for entity: [(timestamp, cons_id, duration)]."""
+        return list(self._consumable_activations.get(entity_id, []))
+
+    def get_avatar_entity_id(self) -> int | None:
+        """Return the entity ID of the Avatar entity, or None."""
+        for eid, etype in self._entity_types.items():
+            if etype == "Avatar":
+                return eid
+        return None
+
+    def property_changes_by_name(self, prop_name: str) -> list[PropertyChange]:
+        """Return all PropertyChange entries matching the given property name."""
+        return [c for c in self._history if c.property_name == prop_name]
+
+    def first_position_timestamp(self, entity_id: int) -> float | None:
+        """Return the timestamp of the first recorded position for entity, or None."""
+        positions = self._positions.get(entity_id)
+        if positions:
+            return positions[0][0]
+        return None
+
+    @property
+    def battle_start_time(self) -> float | None:
+        """Return the timestamp when battleStage transitioned to 0 (battle active), or None.
+
+        Cached after first computation.
+        """
+        if hasattr(self, "_cached_battle_start_time"):
+            return self._cached_battle_start_time
+        for change in self._history:
+            if change.property_name == "battleStage" and change.new_value == 0:
+                self._cached_battle_start_time: float | None = change.timestamp
+                return change.timestamp
+        self._cached_battle_start_time = None
+        return None
+
+    @property
+    def positions_dict(self) -> dict[int, list[tuple[float, tuple[float, float, float], float]]]:
+        """Read-only access to entity position histories."""
+        return self._positions
+
+    @property
+    def minimap_positions_dict(self) -> dict[int, list[tuple[float, float, float, float, bool, bool]]]:
+        """Read-only access to minimap vision event histories."""
+        return self._minimap_positions
+
     # --- Private helpers ---
 
     def _track_consumable_slots(self, packet: Packet) -> None:
