@@ -299,26 +299,10 @@ def parse_replay(
                 # entities.xml enumeration is 0-based.
                 registry.register_type_id(idx + 1, child.tag)
     else:
-        # entities.xml missing (older gamedata tags predate its extraction).
-        # Use the canonical BigWorld type_id mapping — stable across all
-        # WoWS versions since 0.9.x.  Verified against wows-toolkit and
-        # decompiled client scripts.  1-based indices.
-        _CANONICAL_TYPE_IDS: dict[int, str] = {
-            1: "Avatar", 2: "Vehicle", 3: "Account",
-            4: "SmokeScreen", 5: "OfflineEntity", 6: "VehicleAppearance",
-            7: "Login", 8: "BattleEntity", 9: "Building",
-            10: "MasterChanger", 11: "BattleLogic", 12: "ReplayLeech",
-            13: "ReplayConnectionHandler", 14: "InteractiveZone",
-            15: "InteractiveObject",
-        }
-        for tidx, name in _CANONICAL_TYPE_IDS.items():
-            if registry.get(name) is not None:
-                registry.register_type_id(tidx, name)
-        # Auto-detect fills in any types not in the canonical map
+        # Fallback: auto-detect type_id mapping from packet data
         type_mapping = detect_type_id_mapping(replay.packet_data, registry)
         for tidx, name in type_mapping.items():
-            if registry.get_by_type_id(tidx) is None:
-                registry.register_type_id(tidx, name)
+            registry.register_type_id(tidx, name)
 
     # Method ordering is now deterministic via stable_sort + declaration order
     # + implementedBy fix. The auto-detector is redundant for Avatar/Vehicle.
