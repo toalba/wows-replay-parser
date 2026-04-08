@@ -21,6 +21,7 @@ from .models import (
     PropertyChange,
     ShipState,
     SmokeScreenState,
+    WeatherZoneState,
 )
 
 _SENTINEL = object()
@@ -53,6 +54,7 @@ _SHIP_PROPERTY_MAP: dict[str, str] = {
 }
 
 _SNAPSHOT_INTERVAL = 5.0  # seconds between cached snapshots
+_EMPTY_TURRET_YAWS: dict[int, float] = {}
 
 
 class GameStateTracker:
@@ -97,6 +99,12 @@ class GameStateTracker:
         self._map_space_id: int | None = None
         self._map_arena_id: int | None = None
         self._map_name: str | None = None
+        # BattleLogic entity ID (cached for O(1) lookup)
+        self._battle_logic_id: int | None = None
+        # Weather zone entity IDs (InteractiveZone with type==5)
+        self._weather_zone_ids: set[int] = set()
+        # Turret yaw per entity: entity_id → {gun_id → yaw_radians}
+        self._turret_yaws: dict[int, dict[int, float]] = {}
         # PlayerNetStats (0x1D) timeline: list of (timestamp, raw_u32)
         self._net_stats: list[tuple[float, int]] = []
 
@@ -149,6 +157,8 @@ class GameStateTracker:
                 self._entity_types[packet.entity_id] = packet.entity_type
                 self._current.setdefault(packet.entity_id, {})
                 self._dirty_entities.add(packet.entity_id)
+                if packet.entity_type in ("BattleLogic", "BattleEntity"):
+                    self._battle_logic_id = packet.entity_id
 
             # Seed initial position from ENTITY_CREATE so vehicles are
             # visible from spawn (especially the self player and allies
@@ -183,6 +193,12 @@ class GameStateTracker:
                     self._history.append(change)
                     self._history_timestamps.append(change.timestamp)
                     changes.append(change)
+
+                # Identify weather zones: InteractiveZone with type==5
+                if packet.entity_type == "InteractiveZone":
+                    iz_type = packet.initial_properties.get("type", 0)
+                    if iz_type == 5:
+                        self._weather_zone_ids.add(packet.entity_id)
 
         # Property update
         elif ptype == PacketType.ENTITY_PROPERTY:
@@ -294,6 +310,16 @@ class GameStateTracker:
             # The BLOB contains: usage_type(u8) + consumable_id(u8)
             if packet.method_name == "onConsumableUsed" and packet.method_args:
                 self._track_consumable_used(packet)
+
+            # Turret yaw accumulation from syncGun (weapon_type==0 = ARTILLERY)
+            if packet.method_name == "syncGun" and packet.method_args:
+                weapon_type = int(self._get_arg(packet.method_args, 0) or 0)
+                if weapon_type == 0:
+                    gun_id = int(self._get_arg(packet.method_args, 1) or 0)
+                    yaw = float(self._get_arg(packet.method_args, 2) or 0.0)
+                    self._turret_yaws.setdefault(
+                        packet.entity_id, {},
+                    )[gun_id] = yaw
 
             # Minimap vision info (Trap 5/6)
             if packet.method_name == "updateMinimapVisionInfo" and packet.method_args:
@@ -444,6 +470,7 @@ class GameStateTracker:
             aircraft=self._build_aircraft_at(t),
             smoke_screens=self._build_smoke_screens(state, t),
             buildings=self._build_buildings(state, t),
+            weather_zones=self._build_weather_zones(state, t),
         )
 
     def iter_states(
@@ -594,63 +621,11 @@ class GameStateTracker:
                     # Minimap vision (Trap 5/6) — mm already fetched above
                     if mm is None:
                         mm = mm_cache.get(entity_id)
-                    mm_x = mm[0] if mm else 0.0
-                    mm_z = mm[1] if mm else 0.0
-                    mm_h = mm[2] if mm else 0.0
-                    mm_det = mm[3] if mm else False
 
-                    death_pos_val = self._death_positions.get(entity_id)
-                    death_position = death_pos_val[0] if death_pos_val else None
-
-                    ships[entity_id] = ShipState(
-                        entity_id=entity_id,
-                        health=float(props.get("health", 0)),
-                        max_health=float(props.get("maxHealth", 0)),
-                        regeneration_health=float(
-                            props.get("regenerationHealth", 0),
-                        ),
-                        regenerated_health=float(
-                            props.get("regeneratedHealth", 0),
-                        ),
-                        is_alive=is_alive,
-                        team_id=int(props.get("teamId", 0)),
-                        visibility_flags=int(
-                            props.get("visibilityFlags", 0),
-                        ),
-                        burning_flags=int(
-                            props.get("burningFlags", 0),
-                        ),
-                        position=pos,
-                        yaw=yaw,
-                        speed=float(
-                            props.get("serverSpeedRaw", 0),
-                        ),
-                        minimap_x=mm_x,
-                        minimap_z=mm_z,
-                        minimap_heading=mm_h,
-                        is_detected=mm_det,
-                        death_position=death_position,
-                        is_on_forsage=bool(props.get("isOnForsage", False)),
-                        engine_power=int(props.get("enginePower", 0)),
-                        engine_dir=int(props.get("engineDir", 0)),
-                        speed_sign_dir=int(props.get("speedSignDir", 0)),
-                        max_speed=float(props.get("maxServerSpeedRaw", 0)),
-                        rudder_angle=float(props.get("ruddersAngle", 0)),
-                        deep_rudder_angle=float(props.get("deepRuddersAngle", 0)),
-                        selected_weapon=int(props.get("selectedWeapon", 0)),
-                        is_invisible=bool(props.get("isInvisible", False)),
-                        has_active_squadron=bool(props.get("hasActiveMainSquadron", False)),
-                        is_in_rage_mode=bool(props.get("isInRageMode", False)),
-                        respawn_time=float(props.get("respawnTime", 0)),
-                        blocked_controls=int(props.get("blockedControls", 0)),
-                        oil_leak_state=int(props.get("oilLeakState", 0)),
-                        owner=int(props.get("owner", 0)),
-                        regen_crew_hp_limit=float(props.get("regenCrewHpLimit", 0)),
-                        buoyancy=float(props.get("buoyancy", 0)),
-                        air_defense_disp_radius=float(props.get("airDefenseDispRadius", 0)),
-                        weapon_lock_flags=int(props.get("weaponLockFlags", 0)),
-                        target_local_pos=int(props.get("targetLocalPos", 0)),
-                        torpedo_local_pos=int(props.get("torpedoLocalPos", 0)),
+                    ships[entity_id] = self._build_ship_state(
+                        entity_id, props, t,
+                        cached_pos=pos, cached_yaw=yaw,
+                        cached_mm=mm,
                     )
                 elif etype in ("BattleLogic", "BattleEntity"):
                     battle = self._build_battle_state(
@@ -680,6 +655,7 @@ class GameStateTracker:
                 aircraft=dict(running_aircraft),
                 smoke_screens=self._build_smoke_screens(running, t),
                 buildings=self._build_buildings(running, t),
+                weather_zones=self._build_weather_zones(running, t),
             )
 
     def ship_state(self, entity_id: int, t: float) -> ShipState:
@@ -1148,51 +1124,68 @@ class GameStateTracker:
         return snapshot_state
 
     def _build_ship_state(
-        self, entity_id: int, props: dict[str, Any], t: float
+        self, entity_id: int, props: dict[str, Any], t: float,
+        *,
+        cached_pos: tuple[float, float, float] | None = None,
+        cached_yaw: float | None = None,
+        cached_mm: tuple[float, float, float, bool] | None = None,
     ) -> ShipState:
-        """Build a ShipState from raw property dict."""
+        """Build a ShipState from raw property dict.
+
+        When cached_pos/cached_yaw/cached_mm are provided (from iter_states
+        cursor-based lookups), the expensive bisect-based position and minimap
+        lookups are skipped.
+        """
         is_alive = bool(props.get("isAlive", True))
 
-        # Minimap vision data (Trap 5/6)
-        minimap_x, minimap_z, minimap_heading, is_detected = 0.0, 0.0, 0.0, False
-        mm = self.minimap_at(entity_id, t)
-        if mm is not None:
-            minimap_x, minimap_z, minimap_heading, is_detected = mm
-
-        # Trap 13: use death position for dead ships
-        if not is_alive and entity_id in self._death_positions:
-            death_pos, death_yaw = self._death_positions[entity_id]
-            pos = death_pos
-            yaw = death_yaw
-        else:
-            world_pos = self.position_at(entity_id, t)
-            if world_pos is not None:
-                pos = world_pos
-                yaw = 0.0
-                positions = self._positions.get(entity_id)
-                if positions:
-                    timestamps = [p[0] for p in positions]
-                    idx = bisect_right(timestamps, t)
-                    if idx > 0:
-                        yaw = positions[idx - 1][2]
-
-                # Check if world position is stale — use minimap if newer
-                if positions and mm is not None:
-                    last_pos_t = positions[min(idx, len(positions)) - 1][0] if idx > 0 else 0.0
-                    mm_entries = self._minimap_positions.get(entity_id, [])
-                    mm_ts = [e[0] for e in mm_entries]
-                    mm_idx = bisect_right(mm_ts, t)
-                    last_mm_t = mm_entries[mm_idx - 1][0] if mm_idx > 0 else 0.0
-                    if last_mm_t > last_pos_t + 2.0 and (minimap_x != 0.0 or minimap_z != 0.0):
-                        pos = (minimap_x, 0.0, minimap_z)
-                        yaw = minimap_heading
-            elif mm is not None and (minimap_x != 0.0 or minimap_z != 0.0):
-                # No world position — use minimap position
-                pos = (minimap_x, 0.0, minimap_z)
-                yaw = minimap_heading
+        if cached_pos is not None:
+            # Fast path: position data pre-resolved by iter_states() cursors
+            pos = cached_pos
+            yaw = cached_yaw if cached_yaw is not None else 0.0
+            if cached_mm is not None:
+                minimap_x, minimap_z, minimap_heading, is_detected = cached_mm
             else:
-                pos = (0.0, 0.0, 0.0)
-                yaw = 0.0
+                minimap_x, minimap_z, minimap_heading, is_detected = 0.0, 0.0, 0.0, False
+        else:
+            # Slow path: bisect-based lookup (used by state_at/ship_state)
+            minimap_x, minimap_z, minimap_heading, is_detected = 0.0, 0.0, 0.0, False
+            mm = self.minimap_at(entity_id, t)
+            if mm is not None:
+                minimap_x, minimap_z, minimap_heading, is_detected = mm
+
+            # Trap 13: use death position for dead ships
+            if not is_alive and entity_id in self._death_positions:
+                death_pos, death_yaw = self._death_positions[entity_id]
+                pos = death_pos
+                yaw = death_yaw
+            else:
+                world_pos = self.position_at(entity_id, t)
+                if world_pos is not None:
+                    pos = world_pos
+                    yaw = 0.0
+                    positions = self._positions.get(entity_id)
+                    if positions:
+                        timestamps = [p[0] for p in positions]
+                        idx = bisect_right(timestamps, t)
+                        if idx > 0:
+                            yaw = positions[idx - 1][2]
+
+                        # Check if world position is stale — use minimap if newer
+                        if mm is not None:
+                            last_pos_t = positions[min(idx, len(positions)) - 1][0] if idx > 0 else 0.0
+                            mm_entries = self._minimap_positions.get(entity_id, [])
+                            mm_ts = [e[0] for e in mm_entries]
+                            mm_idx = bisect_right(mm_ts, t)
+                            last_mm_t = mm_entries[mm_idx - 1][0] if mm_idx > 0 else 0.0
+                            if last_mm_t > last_pos_t + 2.0 and (minimap_x != 0.0 or minimap_z != 0.0):
+                                pos = (minimap_x, 0.0, minimap_z)
+                                yaw = minimap_heading
+                elif mm is not None and (minimap_x != 0.0 or minimap_z != 0.0):
+                    pos = (minimap_x, 0.0, minimap_z)
+                    yaw = minimap_heading
+                else:
+                    pos = (0.0, 0.0, 0.0)
+                    yaw = 0.0
 
         # Death position for the state model
         death_pos_val = self._death_positions.get(entity_id)
@@ -1237,6 +1230,7 @@ class GameStateTracker:
             weapon_lock_flags=int(props.get("weaponLockFlags", 0)),
             target_local_pos=int(props.get("targetLocalPos", 0)),
             torpedo_local_pos=int(props.get("torpedoLocalPos", 0)),
+            turret_yaws=self._turret_yaws.get(entity_id, _EMPTY_TURRET_YAWS),
         )
 
     @staticmethod
@@ -1277,6 +1271,8 @@ class GameStateTracker:
         cap_points: list[CapturePointState] = []
         for entity_id, props in all_state.items():
             if self._entity_types.get(entity_id) != "InteractiveZone":
+                continue
+            if entity_id in self._weather_zone_ids:
                 continue
             cs_raw = props.get("componentsState", {})
             cap_logic = _container_get(cs_raw, "captureLogic") or {}
@@ -1348,6 +1344,46 @@ class GameStateTracker:
                 team_id=int(props.get("teamId", 0)),
                 is_alive=bool(props.get("isAlive", True)),
                 is_suppressed=bool(props.get("isSuppressed", False)),
+                position=position,
+            )
+        return result
+
+    def _build_weather_zones(
+        self, all_state: dict[int, dict[str, Any]], t: float,
+    ) -> dict[int, WeatherZoneState]:
+        """Build weather zone states from InteractiveZone entities with type==5."""
+        if not self._weather_zone_ids:
+            return {}
+
+        # Look up BattleLogic localWeather data for params_id
+        local_weather_by_name: dict[str, int] = {}
+        if self._battle_logic_id is not None:
+            bl_props = all_state.get(self._battle_logic_id, {})
+            bl_state = bl_props.get("state")
+            if isinstance(bl_state, dict):
+                weather = _container_get(bl_state, "weather")
+                if isinstance(weather, dict):
+                    local_list = _container_get(weather, "localWeather")
+                    if isinstance(local_list, list):
+                        for entry in local_list:
+                            name = _container_get(entry, "name", "")
+                            params_id = _container_get(entry, "paramsId", 0)
+                            if name and params_id:
+                                local_weather_by_name[str(name)] = int(params_id)
+
+        result: dict[int, WeatherZoneState] = {}
+        for entity_id in self._weather_zone_ids:
+            props = all_state.get(entity_id, {})
+            pos_data = self.position_at(entity_id, t)
+            position = pos_data if pos_data else (0.0, 0.0, 0.0)
+            name = str(props.get("name", ""))
+            params_id = local_weather_by_name.get(name, 0)
+
+            result[entity_id] = WeatherZoneState(
+                entity_id=entity_id,
+                name=name,
+                radius=float(props.get("radius", 0)),
+                params_id=params_id,
                 position=position,
             )
         return result

@@ -601,8 +601,32 @@ class _StubParser:
         return {"raw": data.hex()}
 
 
-class WeatherLogicParamsStub(_StubParser):
-    _type_name = "WEATHER_LOGIC_PARAMS"
+class WeatherLogicParamsParser:
+    """WEATHER_LOGIC_PARAMS — 23 consecutive FLOAT32 LE (92 bytes).
+
+    Has implementedBy (WeatherParamsDef.converter), so wire format is
+    raw floats, not construct-schema-encoded.
+    """
+
+    _FIELDS = (
+        "visibilityFactor", "visibilityFactorByPlane",
+        "planeVisibilityFactor", "planeVisibilityFactorByPlane",
+        "maxVisibilityDistance", "maxVisibilityDistanceByPlane",
+        "planeMaxVisibilityDistance", "planeMaxVisibilityDistanceByPlane",
+        "mgVisibilityTime", "airDefenseVisibilityTime",
+        "GMIdealRadius", "GSIdealRadius", "GSMIdealRadius",
+        "AAMaxDist", "shootShift", "speedCoef", "planeSpeed",
+        "burnDamage", "burnTime", "maxShipVisionDistance",
+        "maxPlaneVisionDistance", "bad", "transparency",
+    )
+
+    @classmethod
+    def parse(cls, data: bytes) -> dict[str, Any]:
+        if len(data) >= 92:
+            values = struct.unpack_from("<23f", data, 0)
+            return dict(zip(cls._FIELDS, values, strict=True))
+        log.warning("WeatherLogicParams: expected 92 bytes, got %d", len(data))
+        return {"raw": data.hex()}
 
 
 class ModifierStateStub(_StubParser):
@@ -645,7 +669,7 @@ PARSERS: dict[str, type] = {
     "MSGPACK_BLOB": MsgpackBlobParser,
     "PICKLED_BLOB": PickledBlobParser,
     # Stubs (partial/unknown)
-    "WEATHER_LOGIC_PARAMS": WeatherLogicParamsStub,
+    "WEATHER_LOGIC_PARAMS": WeatherLogicParamsParser,
     "MODIFIER_STATE": ModifierStateStub,
     "SECTOR_WAVE_SHOT": SectorWaveShotStub,
     "SHOT_DECAL": ShotDecalStub,

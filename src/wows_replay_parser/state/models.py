@@ -60,6 +60,7 @@ class ShipState:
     weapon_lock_flags: int = 0
     target_local_pos: int = 0
     torpedo_local_pos: int = 0
+    turret_yaws: dict[int, float] = field(default_factory=dict)  # gun_id → yaw radians
 
 
 @dataclass
@@ -162,6 +163,17 @@ class BuildingState:
 
 
 @dataclass
+class WeatherZoneState:
+    """Snapshot of a weather zone (InteractiveZone type==5)."""
+
+    entity_id: int
+    name: str = ""
+    radius: float = 0.0
+    params_id: int = 0
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
+
+@dataclass
 class GameState:
     """Full game state snapshot at a point in time."""
 
@@ -171,3 +183,4 @@ class GameState:
     aircraft: dict[int, AircraftState] = field(default_factory=dict)
     smoke_screens: dict[int, SmokeScreenState] = field(default_factory=dict)
     buildings: dict[int, BuildingState] = field(default_factory=dict)
+    weather_zones: dict[int, WeatherZoneState] = field(default_factory=dict)

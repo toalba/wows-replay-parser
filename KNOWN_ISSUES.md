@@ -29,17 +29,11 @@ returns all Avatar props in one rebuild, letting callers extract what they need.
 
 ---
 
-### A-4: Duplicate ShipState constructors (maintenance trap)
+### ~~A-4: Duplicate ShipState constructors~~ FIXED
 
-`iter_states()` constructs `ShipState` inline (~70 lines) instead of calling
-`_build_ship_state()`. Both code paths must be kept in exact sync — any field
-added/renamed in one but not the other silently diverges.
-
-**Files:** `state/tracker.py` — `iter_states` (~line 592) vs `_build_ship_state` (~line 1007)
-
-**Fix:** Replace the inline constructor in `iter_states` with a call to
-`_build_ship_state(entity_id, props, t)`. Minor perf tradeoff (one extra
-dict lookup per entity per frame).
+`iter_states()` now calls `_build_ship_state()` with cached position data
+(`cached_pos`, `cached_yaw`, `cached_mm` keyword args) instead of duplicating
+the constructor inline. O(delta) cursor optimization preserved.
 
 ---
 

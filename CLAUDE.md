@@ -84,7 +84,7 @@ src/wows_replay_parser/
 │   ├── models.py           # ShipState, BattleState, CapturePointState, GameState, PropertyChange
 │   └── tracker.py          # GameStateTracker — property history + state_at()/iter_states() queries
 ├── events/            # Typed game event stream
-│   ├── models.py           # 20 event types (Position, Damage, Death, Shot, Torpedo, Cap, Score, Vision, Squadron, Ribbon, etc.)
+│   ├── models.py           # 109 event types (combat, squadron, consumable, submarine, AA, game state, etc.)
 │   └── stream.py           # Packet → Event transformation with method+property factories
 ├── api.py             # Top-level parse_replay() + ParsedReplay with state queries
 ├── roster.py          # Player roster enrichment (JSON header + onArenaStateReceived pickle)
@@ -361,9 +361,11 @@ correct against real replay data.
 | Ship physics | WORKING | Vehicle → syncShipPhysics (pickle blob) |
 | Hit locations | WORKING | Vehicle → receiveHitLocationStateChange, receiveHitLocationsInitialState |
 | Achievements | WORKING | Avatar → onAchievementEarned |
-| Capture zones | PARTIAL | InteractiveZone → componentsState (field names fixed, inline state not parsed) |
-| Smoke screens | NOT IMPL | SmokeScreen entity — positions tracked, no state model |
-| Buildings | NOT IMPL | Building entity — no state model |
+| Capture zones | WORKING | InteractiveZone → componentsState (530 nested props/game routed), CapturePointState in GameState |
+| Smoke screens | WORKING | SmokeScreenState in GameState — positions, radius, points tracked via NonVolatilePosition + nested properties |
+| Buildings | WORKING | BuildingState in GameState — paramsId, teamId, isAlive, isSuppressed, position |
+| Weather zones | WORKING | InteractiveZone type==5 → WeatherZoneState in GameState (position, radius, name, params_id) |
+| Turret yaw | WORKING | syncGun weapon_type==0 → ShipState.turret_yaws dict (gun_id → yaw radians) |
 
 ### Map Coordinate System
 - Map bounds from `wows-gamedata/data/spaces/<map_name>/space.settings` — XML with `<bounds minX maxX minY maxY />`
@@ -407,6 +409,12 @@ replay.ship_state(entity_id, t)  # ShipState
 replay.events_of_type(ShotCreatedEvent)
 replay.recording_player_ribbons()  # Server-authoritative ribbons
 ```
+
+## State Tracker — Recently Implemented
+
+1. **Weather zone state tracking** — InteractiveZone entities with `type==5` are identified on ENTITY_CREATE and tracked as `WeatherZoneState` in `GameState.weather_zones`. Position from NonVolatilePosition (0x2A), radius from entity props, params_id matched from BattleLogic `state.weather.localWeather` by name. `_build_capture_points` now excludes weather zones.
+2. **Turret yaw per-entity accumulation** — `syncGun` method calls with `weapon_type==0` (ARTILLERY) accumulate per-turret yaw in `ShipState.turret_yaws: dict[int, float]` (gun_id → yaw_radians). Renderer uses lowest gun_id (forward turret) for direction line.
+3. **A-4 fix: duplicate ShipState constructor eliminated** — `iter_states()` now calls `_build_ship_state()` with cached position data instead of duplicating the constructor inline.
 
 ## Gamedata Repo
 
