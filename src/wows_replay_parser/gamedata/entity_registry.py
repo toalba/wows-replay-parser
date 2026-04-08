@@ -46,13 +46,18 @@ def compute_type_sort_size(type_name: str, aliases: AliasRegistry) -> int:
     if alias is None:
         return INFINITY  # Unknown types treated as variable-length
 
-    # BigWorld: implementedBy means a custom Python serializer controls the
-    # wire format → FixedDictDataType::streamSize() returns -1 (variable).
-    # This applies to FIXED_DICT, USER_TYPE, and simple aliases alike.
-    if alias.has_implemented_by:
-        return INFINITY
-
+    # implementedBy on FIXED_DICT types: the engine computes streamSize() from
+    # the raw field types, ignoring the custom serializer. So we compute field
+    # sizes normally for FIXED_DICT + implementedBy.
+    #
+    # implementedBy on simple/primitive aliases (e.g., NULLABLE_FLOAT → FLOAT):
+    # the custom serializer may change the wire format (e.g., adding a nullable
+    # flag byte), making streamSize() return -1 (variable). These must be INFINITY.
     base = alias.base_type.strip()
+
+    if alias.has_implemented_by and base not in ("FIXED_DICT", "ARRAY", "TUPLE"):
+        # Simple alias with implementedBy → custom wire format → variable
+        return INFINITY
 
     # Simple alias → recurse to the base type
     if base in _PRIM_SORT_SIZE:
