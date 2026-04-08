@@ -604,6 +604,7 @@ class PacketDecoder:
                 value = schema.parse(remaining)
                 packet.property_name = prop_def.name
                 packet.property_value = value
+                packet.operation_type = "set"
                 # Apply to tracker's _current
                 if self._tracker is not None:
                     entity_props = self._tracker._current.setdefault(entity_id, {})
@@ -694,8 +695,10 @@ class PacketDecoder:
                             if value is None:
                                 # Delete operation: remove elements [idx1:idx2]
                                 del target[idx1:idx2]
+                                packet.operation_type = "delete"
                             else:
                                 target[idx1:idx2] = [value]
+                                packet.operation_type = "set_range"
                             packet.property_value = current
                     elif isinstance(target, list):
                         try:
@@ -708,9 +711,11 @@ class PacketDecoder:
                                 target.append(None)
                             target[idx] = value
                             packet.property_value = current
+                            packet.operation_type = "set_key"
                     elif isinstance(target, dict):
                         target[field_name] = value
                         packet.property_value = current
+                        packet.operation_type = "set_key"
 
                 # After apply: if this was a speculative decode, grow the
                 # tracked array to the inferred min length. We do this AFTER
@@ -1387,7 +1392,8 @@ class PacketDecoder:
 
         Payload: state(u8)
         """
-        pass  # 1 byte state flag
+        if len(packet.raw_payload) >= 1:
+            packet.camera_free_look_state = struct.unpack("<B", packet.raw_payload[:1])[0]
 
     def _handle_set_weapon_lock(self, packet: Packet) -> None:
         """
@@ -1416,7 +1422,12 @@ class PacketDecoder:
 
     def _handle_sub_controller(self, packet: Packet) -> None:
         """SubController (0x31) — submarine controller mode."""
-        pass  # Submarine-specific, no data needed yet
+        if len(packet.raw_payload) >= 5:
+            mode, depth = struct.unpack("<Bf", packet.raw_payload[:5])
+            packet.sub_controller_mode = mode
+            packet.sub_controller_depth = depth
+        elif len(packet.raw_payload) >= 1:
+            packet.sub_controller_mode = struct.unpack("<B", packet.raw_payload[:1])[0]
 
     def _handle_shot_tracking(self, packet: Packet) -> None:
         """

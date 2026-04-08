@@ -14,6 +14,7 @@ class PropertyChange:
     property_name: str
     old_value: Any
     new_value: Any
+    operation_type: str | None = None  # "set", "set_key", "set_range", "delete", "clear"
 
 
 @dataclass
@@ -61,6 +62,14 @@ class ShipState:
     target_local_pos: int = 0
     torpedo_local_pos: int = 0
     turret_yaws: dict[int, float] = field(default_factory=dict)  # gun_id → yaw radians
+    is_bot: bool = False
+    has_air_targets_in_range: bool = False
+    is_anti_air_mode: bool = False
+    atba_yaws: dict[int, float] = field(default_factory=dict)  # gun_id → yaw radians (secondary battery)
+    torpedo_yaws: dict[int, float] = field(default_factory=dict)  # gun_id → yaw radians (torpedo tubes)
+    battery: dict | None = None  # BATTERY_STATE from Vehicle state.battery
+    buffs: list | None = None  # BUFFS_STATE from Vehicle state.buffs
+    atba_targets: list | None = None  # ATBA_STATE from Vehicle state.atba
 
 
 @dataclass
@@ -83,6 +92,23 @@ class CapturePointState:
     # From CONTROL_POINT_STATE (nested in componentsState.controlPoint)
     point_type: int = 0  # cap zone type
     point_index: int = -1  # A=0, B=1, C=2, ...
+    is_visible: bool = True
+    capture_time: float = 0.0
+    buoy_visual_id: int = 0
+    next_control_point: int = 0
+    timer_name: str = ""
+
+
+@dataclass
+class BuffZoneState:
+    """Snapshot of a buff drop zone (InteractiveZone type==6)."""
+
+    entity_id: int
+    zone_id: int = 0  # from DROP_ITEM_STATE.zoneId
+    params_id: int = 0  # from DROP_ITEM_STATE.paramsId
+    radius: float = 0.0
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    is_active: bool = True
 
 
 @dataclass
@@ -121,6 +147,7 @@ class BattleState:
     battle_type: int = 0
     duration: int = 0
     map_border: dict | None = None
+    drop_state: dict | None = None  # Raw DROP_STATE from BattleLogic.state.drop
 
 
 @dataclass
@@ -135,6 +162,7 @@ class AircraftState:
     z: float = 0.0  # world z
     is_active: bool = True
     num_planes: int = 0  # from SQUADRON_STATE.numPlanes (0 if unknown)
+    owner_id: int = 0  # Vehicle entity_id of the owning ship (0 if unknown)
 
 
 @dataclass
@@ -148,6 +176,8 @@ class SmokeScreenState:
     active_point_index: int = -1
     points: list[tuple[float, float, float]] = field(default_factory=list)
     position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    spawn_point_effect: str = ""
+    live_point_effect: str = ""
 
 
 @dataclass
@@ -160,6 +190,7 @@ class BuildingState:
     is_alive: bool = True
     is_suppressed: bool = False
     position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    target_pos: tuple[float, float, float] | None = None
 
 
 @dataclass
@@ -171,6 +202,8 @@ class WeatherZoneState:
     radius: float = 0.0
     params_id: int = 0
     position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    inner_radius: float = 0.0
+    owner_id: int = 0  # Ship the zone is attached to (if any)
 
 
 @dataclass
@@ -184,3 +217,4 @@ class GameState:
     smoke_screens: dict[int, SmokeScreenState] = field(default_factory=dict)
     buildings: dict[int, BuildingState] = field(default_factory=dict)
     weather_zones: dict[int, WeatherZoneState] = field(default_factory=dict)
+    buff_zones: dict[int, BuffZoneState] = field(default_factory=dict)

@@ -13,6 +13,7 @@ from wows_replay_parser.packets.types import Packet, PacketType
 from .models import (
     AircraftState,
     BattleState,
+    BuffZoneState,
     BuildingState,
     CapturePointState,
     GameState,
@@ -103,10 +104,18 @@ class GameStateTracker:
         self._battle_logic_id: int | None = None
         # Weather zone entity IDs (InteractiveZone with type==5)
         self._weather_zone_ids: set[int] = set()
+        # Buff drop zone entity IDs (InteractiveZone with type==6)
+        self._buff_zone_ids: set[int] = set()
         # Turret yaw per entity: entity_id → {gun_id → yaw_radians}
         self._turret_yaws: dict[int, dict[int, float]] = {}
+        # ATBA (secondary battery) yaw per entity: entity_id → {gun_id → yaw_radians}
+        self._atba_yaws: dict[int, dict[int, float]] = {}
+        # Torpedo tube yaw per entity: entity_id → {gun_id → yaw_radians}
+        self._torpedo_yaws: dict[int, dict[int, float]] = {}
         # PlayerNetStats (0x1D) timeline: list of (timestamp, raw_u32)
         self._net_stats: list[tuple[float, int]] = []
+        # GunMarker (0x18) positions: list of (timestamp, (x, y, z))
+        self._gun_marker_positions: list[tuple[float, tuple[float, float, float]]] = []
 
     def process_packet(self, packet: Packet) -> list[PropertyChange]:
         """Process a decoded packet, updating internal state.
@@ -189,16 +198,20 @@ class GameStateTracker:
                         property_name=prop_name,
                         old_value=None,
                         new_value=self._snapshot_value(prop_value),
+                        operation_type="set",
                     )
                     self._history.append(change)
                     self._history_timestamps.append(change.timestamp)
                     changes.append(change)
 
                 # Identify weather zones: InteractiveZone with type==5
+                # Identify buff drop zones: InteractiveZone with type==6
                 if packet.entity_type == "InteractiveZone":
                     iz_type = packet.initial_properties.get("type", 0)
                     if iz_type == 5:
                         self._weather_zone_ids.add(packet.entity_id)
+                    elif iz_type == 6:
+                        self._buff_zone_ids.add(packet.entity_id)
 
         # Property update
         elif ptype == PacketType.ENTITY_PROPERTY:
@@ -215,6 +228,7 @@ class GameStateTracker:
                     property_name=packet.property_name,
                     old_value=old_value,
                     new_value=self._snapshot_value(packet.property_value),
+                    operation_type="set",
                 )
                 self._history.append(change)
                 self._history_timestamps.append(change.timestamp)
@@ -237,6 +251,7 @@ class GameStateTracker:
                     property_name=packet.property_name,
                     old_value=None,
                     new_value=self._snapshot_value(packet.property_value),
+                    operation_type=packet.operation_type,
                 )
                 self._history.append(change)
                 self._history_timestamps.append(change.timestamp)
@@ -277,6 +292,13 @@ class GameStateTracker:
                     (packet.timestamp, packet.camera_position),
                 )
 
+        # GunMarker (0x18) — store gun marker position for timeline queries
+        elif ptype == PacketType.GUN_MARKER:
+            if packet.gun_marker_position is not None:
+                self._gun_marker_positions.append(
+                    (packet.timestamp, packet.gun_marker_position),
+                )
+
         # PlayerNetStats (0x1D) — store raw network quality metric for timeline queries
         elif ptype == PacketType.PLAYER_NET_STATS:
             raw = getattr(packet, "net_stats_raw", None)
@@ -311,13 +333,22 @@ class GameStateTracker:
             if packet.method_name == "onConsumableUsed" and packet.method_args:
                 self._track_consumable_used(packet)
 
-            # Turret yaw accumulation from syncGun (weapon_type==0 = ARTILLERY)
+            # Turret/weapon yaw accumulation from syncGun.
+            # weapon_type: 0=ARTILLERY (main battery), 1=ATBA (secondary), 2=TORPEDO
             if packet.method_name == "syncGun" and packet.method_args:
                 weapon_type = int(self._get_arg(packet.method_args, 0) or 0)
+                gun_id = int(self._get_arg(packet.method_args, 1) or 0)
+                yaw = float(self._get_arg(packet.method_args, 2) or 0.0)
                 if weapon_type == 0:
-                    gun_id = int(self._get_arg(packet.method_args, 1) or 0)
-                    yaw = float(self._get_arg(packet.method_args, 2) or 0.0)
                     self._turret_yaws.setdefault(
+                        packet.entity_id, {},
+                    )[gun_id] = yaw
+                elif weapon_type == 1:
+                    self._atba_yaws.setdefault(
+                        packet.entity_id, {},
+                    )[gun_id] = yaw
+                elif weapon_type == 2:
+                    self._torpedo_yaws.setdefault(
                         packet.entity_id, {},
                     )[gun_id] = yaw
 
@@ -343,6 +374,7 @@ class GameStateTracker:
                         property_name="isAlive",
                         old_value=old,
                         new_value=False,
+                        operation_type="set",
                     )
                     self._history.append(change)
                     self._history_timestamps.append(change.timestamp)
@@ -363,6 +395,7 @@ class GameStateTracker:
                     property_name="isAlive",
                     old_value=old,
                     new_value=False,
+                    operation_type="set",
                 )
                 self._history.append(change)
                 self._history_timestamps.append(change.timestamp)
@@ -380,6 +413,7 @@ class GameStateTracker:
                     params_id=int(self._get_arg(args, 2) or 0),
                     x=float(pos.get("x", 0)) if isinstance(pos, dict) else 0.0,
                     z=float(pos.get("y", 0)) if isinstance(pos, dict) else 0.0,
+                    owner_id=self._own_vehicle_id or 0,
                 )))
 
             elif packet.method_name == "receive_updateMinimapSquadron" and packet.method_args:
@@ -429,6 +463,7 @@ class GameStateTracker:
                     params_id=params_id,
                     x=float(pos.get("x", 0)) if isinstance(pos, dict) else 0.0,
                     z=float(pos.get("z", 0)) if isinstance(pos, dict) else 0.0,
+                    owner_id=self._own_vehicle_id or 0,
                 )))
 
             elif packet.method_name == "deactivateAirSupport" and packet.method_args:
@@ -471,6 +506,7 @@ class GameStateTracker:
             smoke_screens=self._build_smoke_screens(state, t),
             buildings=self._build_buildings(state, t),
             weather_zones=self._build_weather_zones(state, t),
+            buff_zones=self._build_buff_zones(state, t),
         )
 
     def iter_states(
@@ -656,6 +692,7 @@ class GameStateTracker:
                 smoke_screens=self._build_smoke_screens(running, t),
                 buildings=self._build_buildings(running, t),
                 weather_zones=self._build_weather_zones(running, t),
+                buff_zones=self._build_buff_zones(running, t),
             )
 
     def ship_state(self, entity_id: int, t: float) -> ShipState:
@@ -700,6 +737,16 @@ class GameStateTracker:
         if idx == 0:
             return None
         return self._net_stats[idx - 1][1]
+
+    def gun_marker_at(self, t: float) -> tuple[float, float, float] | None:
+        """Get gun marker position at time t (bisect lookup)."""
+        if not self._gun_marker_positions:
+            return None
+        from bisect import bisect_right
+        idx = bisect_right(self._gun_marker_positions, (t,)) - 1
+        if idx < 0:
+            return None
+        return self._gun_marker_positions[idx][1]
 
     def position_at(self, entity_id: int, t: float) -> tuple[float, float, float] | None:
         """Interpolate position for entity at time t."""
@@ -1191,6 +1238,20 @@ class GameStateTracker:
         death_pos_val = self._death_positions.get(entity_id)
         death_position = death_pos_val[0] if death_pos_val else None
 
+        # Extract nested Vehicle state sub-properties (VEHICLE_STATE FIXED_DICT)
+        vehicle_state = props.get("state")
+        battery: dict | None = None
+        buffs: list | None = None
+        atba_targets: list | None = None
+        if isinstance(vehicle_state, dict):
+            battery = vehicle_state.get("battery")
+            buffs_raw = vehicle_state.get("buffs")
+            if isinstance(buffs_raw, (list, dict)):
+                buffs = buffs_raw if isinstance(buffs_raw, list) else list(buffs_raw.values())
+            atba_raw = vehicle_state.get("atba")
+            if isinstance(atba_raw, (list, dict)):
+                atba_targets = atba_raw if isinstance(atba_raw, list) else list(atba_raw.values())
+
         return ShipState(
             entity_id=entity_id,
             health=float(props.get("health", 0)),
@@ -1231,6 +1292,14 @@ class GameStateTracker:
             target_local_pos=int(props.get("targetLocalPos", 0)),
             torpedo_local_pos=int(props.get("torpedoLocalPos", 0)),
             turret_yaws=self._turret_yaws.get(entity_id, _EMPTY_TURRET_YAWS),
+            is_bot=bool(props.get("isBot", False)),
+            has_air_targets_in_range=bool(props.get("hasAirTargetsInRange", False)),
+            is_anti_air_mode=bool(props.get("isAntiAirMode", False)),
+            atba_yaws=dict(self._atba_yaws.get(entity_id, {})),
+            torpedo_yaws=dict(self._torpedo_yaws.get(entity_id, {})),
+            battery=battery,
+            buffs=buffs,
+            atba_targets=atba_targets,
         )
 
     @staticmethod
@@ -1272,7 +1341,7 @@ class GameStateTracker:
         for entity_id, props in all_state.items():
             if self._entity_types.get(entity_id) != "InteractiveZone":
                 continue
-            if entity_id in self._weather_zone_ids:
+            if entity_id in self._weather_zone_ids or entity_id in self._buff_zone_ids:
                 continue
             cs_raw = props.get("componentsState", {})
             cap_logic = _container_get(cs_raw, "captureLogic") or {}
@@ -1290,6 +1359,11 @@ class GameStateTracker:
                 is_enabled=bool(_container_get(cap_logic, "isEnabled", False)),
                 point_type=int(_container_get(ctrl_point, "type", 0)),
                 point_index=int(_container_get(ctrl_point, "index", -1)),
+                is_visible=bool(_container_get(cap_logic, "isVisible", True)),
+                capture_time=float(_container_get(cap_logic, "captureTime", 0.0)),
+                buoy_visual_id=int(_container_get(ctrl_point, "buoyVisualId", 0)),
+                next_control_point=int(_container_get(ctrl_point, "nextControlPoint", 0)),
+                timer_name=str(_container_get(ctrl_point, "timerName", "")),
             ))
         return cap_points
 
@@ -1324,6 +1398,8 @@ class GameStateTracker:
                 active_point_index=int(props.get("activePointIndex", -1)),
                 points=points,
                 position=position,
+                spawn_point_effect=str(props.get("spawnPointEffect", "")),
+                live_point_effect=str(props.get("livePointEffect", "")),
             )
         return result
 
@@ -1338,6 +1414,11 @@ class GameStateTracker:
             pos_data = self.position_at(entity_id, t)
             position = pos_data if pos_data else (0.0, 0.0, 0.0)
 
+            target_pos_raw = props.get("targetPos")
+            target_pos: tuple[float, float, float] | None = None
+            if isinstance(target_pos_raw, (list, tuple)) and len(target_pos_raw) >= 3:
+                target_pos = (float(target_pos_raw[0]), float(target_pos_raw[1]), float(target_pos_raw[2]))
+
             result[entity_id] = BuildingState(
                 entity_id=entity_id,
                 params_id=int(props.get("paramsId", 0)),
@@ -1345,6 +1426,7 @@ class GameStateTracker:
                 is_alive=bool(props.get("isAlive", True)),
                 is_suppressed=bool(props.get("isSuppressed", False)),
                 position=position,
+                target_pos=target_pos,
             )
         return result
 
@@ -1385,6 +1467,38 @@ class GameStateTracker:
                 radius=float(props.get("radius", 0)),
                 params_id=params_id,
                 position=position,
+                inner_radius=float(props.get("innerRadius", 0)),
+                owner_id=int(props.get("ownerId", 0)),
+            )
+        return result
+
+    def _build_buff_zones(
+        self, all_state: dict[int, dict[str, Any]], t: float,
+    ) -> dict[int, BuffZoneState]:
+        """Build buff drop zone states from InteractiveZone entities with type==6."""
+        if not self._buff_zone_ids:
+            return {}
+
+        result: dict[int, BuffZoneState] = {}
+        for entity_id in self._buff_zone_ids:
+            if not self.is_entity_in_aoi(entity_id, t):
+                continue
+            props = all_state.get(entity_id, {})
+            pos_data = self.position_at(entity_id, t)
+            position = pos_data if pos_data else (0.0, 0.0, 0.0)
+
+            # Read DROP_ITEM_STATE if available
+            drop_item_raw = props.get("dropItemState") or {}
+            zone_id = int(_container_get(drop_item_raw, "zoneId", 0))
+            params_id = int(_container_get(drop_item_raw, "paramsId", 0))
+
+            result[entity_id] = BuffZoneState(
+                entity_id=entity_id,
+                zone_id=zone_id,
+                params_id=params_id,
+                radius=float(props.get("radius", 0)),
+                position=position,
+                is_active=bool(props.get("isActive", True)),
             )
         return result
 
@@ -1413,6 +1527,7 @@ class GameStateTracker:
         kill_scoring: list[KillScoring] = []
         hold_scoring: list[HoldScoring] = []
 
+        drop_raw: dict | None = None
         bl_state = bl_props.get("state")
         if bl_state is not None:
             missions = _container_get(bl_state, "missions")
@@ -1443,6 +1558,11 @@ class GameStateTracker:
                         cp_indices=list(_container_get(entry, "cpIndices", [])),
                     ))
 
+            # Extract raw DROP_STATE from BattleLogic.state.drop
+            drop_candidate = _container_get(bl_state, "drop")
+            if drop_candidate is not None and drop_candidate != {}:
+                drop_raw = drop_candidate if isinstance(drop_candidate, dict) else dict(drop_candidate) if hasattr(drop_candidate, "items") else None
+
         return BattleState(
             battle_stage=int(bl_props.get("battleStage", 0)),
             time_left=int(bl_props.get("timeLeft", 0)),
@@ -1457,6 +1577,7 @@ class GameStateTracker:
             battle_type=int(bl_props.get("battleType", 0)),
             duration=int(bl_props.get("duration", 0)),
             map_border=bl_props.get("mapBorder"),
+            drop_state=drop_raw,
         )
 
     @staticmethod

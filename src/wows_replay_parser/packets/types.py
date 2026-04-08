@@ -123,8 +123,18 @@ class Packet:
     shot_tracking_weapon: int | None = None
     shot_tracking_value: int | None = None
 
+    # CameraFreeLook (0x2F)
+    camera_free_look_state: int | None = None
+
+    # SubController (0x31)
+    sub_controller_mode: int | None = None
+    sub_controller_depth: float | None = None
+
     # PlayerNetStats (0x1D)
     net_stats_raw: int | None = None
+
+    # Nested property operation semantics
+    operation_type: str | None = None  # "set", "set_key", "set_range", "delete", "clear"
 
     # Metadata
     entity_type: str | None = None  # e.g. "Avatar", "Vehicle"
