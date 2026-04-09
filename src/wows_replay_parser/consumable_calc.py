@@ -71,6 +71,9 @@ def compute_effective_reloads(
 ) -> dict[int, float]:
     """Compute effective reload per consumable type for a player.
 
+    File-based variant: reads split JSON files from disk.
+    For the in-memory variant, use ``compute_effective_reloads_from_data``.
+
     Args:
         ship_id: Ship GameParams ID (for base reload lookup).
         ship_species: Ship species string (Destroyer, Cruiser, etc.).
@@ -104,7 +107,106 @@ def compute_effective_reloads(
         split_dir / "Crew", crew_id, learned_skill_ids,
     )
 
-    # 5. Compute effective reload per consumable type
+    # 5. Compute
+    return _compute_reloads(
+        base_reloads, mod_coeffs, skill_coeffs,
+        has_november_foxtrot, ship_species,
+    )
+
+
+def compute_effective_reloads_from_data(
+    ship_consumables: dict[int, dict],
+    modernizations: dict[int, dict],
+    crews: dict[int, dict],
+    ship_id: int,
+    ship_species: str,
+    modernization_ids: list[int],
+    exterior_ids: list[int],
+    learned_skill_ids: list[int],
+    crew_id: int,
+) -> dict[int, float]:
+    """Compute effective reload per consumable type — in-memory variant.
+
+    Uses pre-loaded dicts instead of reading split JSON files from disk.
+    This is the fast path when GameParams data is already in memory.
+
+    Args:
+        ship_consumables: {ship_id(int): {timings: {category: reload_s}, ...}}.
+        modernizations: {gp_id(int): GameParams Modernization entity dict}.
+        crews: {gp_id(int): GameParams Crew entity dict}.
+        ship_id: Ship GameParams ID.
+        ship_species: Ship species string (Destroyer, Cruiser, etc.).
+        modernization_ids: Equipped modernization GameParams IDs.
+        exterior_ids: Equipped exterior (signal/camo) GameParams IDs.
+        learned_skill_ids: Learned captain skill type IDs for this ship type.
+        crew_id: GameParams crew ID.
+
+    Returns:
+        Dict mapping cons_type_id (int) → effective reload time (float seconds).
+    """
+    # 1. Base reloads
+    ship_entry = ship_consumables.get(ship_id)
+    if not ship_entry:
+        return {}
+    timings: dict[str, float] = ship_entry.get("timings", {})
+    base_reloads: dict[int, float] = {}
+    for cons_type_id, cons_type in CONSUMABLE_TYPE_ID_MAP.items():
+        category = _TYPE_TO_CATEGORY.get(cons_type)
+        if category and category in timings:
+            base_reloads[cons_type_id] = timings[category]
+    if not base_reloads:
+        return {}
+
+    # 2. Modernization modifiers (O(1) per equipped mod)
+    mod_coeffs: dict[str, Any] = {}
+    for mid in modernization_ids:
+        data = modernizations.get(mid)
+        if data is None:
+            continue
+        modifiers = data.get("modifiers", {})
+        for key, val in modifiers.items():
+            if "ReloadCoeff" in key or key == "ConsumableReloadTime":
+                mod_coeffs[key] = val
+
+    # 3. November Foxtrot
+    has_november_foxtrot = _NOVEMBER_FOXTROT_ID in exterior_ids
+
+    # 4. Captain skill modifiers (O(1) crew lookup)
+    skill_coeffs: dict[str, Any] = {}
+    crew_data = crews.get(crew_id)
+    if crew_data and learned_skill_ids:
+        skills = crew_data.get("Skills", {})
+        for _skill_name, skill in skills.items():
+            if not isinstance(skill, dict):
+                continue
+            skill_type = skill.get("skillType")
+            if skill_type is None or skill_type not in learned_skill_ids:
+                continue
+            modifiers = skill.get("modifiers", {})
+            for key, val in modifiers.items():
+                if key == "reloadFactor":
+                    excluded = modifiers.get("excludedConsumables", [])
+                    skill_coeffs["reloadFactor"] = {"value": val, "excluded": excluded}
+                elif key == "ConsumableReloadTime":
+                    skill_coeffs["ConsumableReloadTime"] = val
+                elif "ReloadCoeff" in key or "reloadCoeff" in key:
+                    skill_coeffs[key] = val
+
+    # 5. Compute
+    return _compute_reloads(
+        base_reloads, mod_coeffs, skill_coeffs,
+        has_november_foxtrot, ship_species,
+    )
+
+
+def _compute_reloads(
+    base_reloads: dict[int, float],
+    mod_coeffs: dict[str, Any],
+    skill_coeffs: dict[str, Any],
+    has_november_foxtrot: bool,
+    ship_species: str,
+) -> dict[int, float]:
+    """Apply modifier stack to base reloads and return effective values."""
     result: dict[int, float] = {}
     for cons_type_id, base_reload in base_reloads.items():
         cons_type = CONSUMABLE_TYPE_ID_MAP.get(cons_type_id, "")
@@ -130,19 +232,16 @@ def compute_effective_reloads(
         # Captain skills
         for skill_key, skill_val in skill_coeffs.items():
             if skill_key == "reloadFactor":
-                # Generic reload factor (skill type 13) — has exclusions
                 excluded = skill_val.get("excluded", [])
                 if cons_type not in excluded:
                     factor *= skill_val["value"]
             elif skill_key == "ConsumableReloadTime":
-                # Global consumable reload (skill type 79)
                 coeff = skill_val
                 if isinstance(coeff, dict):
                     factor *= coeff.get(ship_species, 1.0)
                 else:
                     factor *= coeff
             elif skill_key == f"{cons_type}ReloadCoeff":
-                # Type-specific skill modifier
                 factor *= skill_val
 
         result[cons_type_id] = base_reload * factor
