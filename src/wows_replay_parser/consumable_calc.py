@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -197,6 +198,185 @@ def compute_effective_reloads_from_data(
         base_reloads, mod_coeffs, skill_coeffs,
         has_november_foxtrot, ship_species,
     )
+
+
+@dataclass
+class ConsumableChargeInfo:
+    """Initial charge/capacity info for one consumable."""
+
+    cons_type_id: int
+    """Consumable type ID (maps to CONSUMABLE_TYPE_ID_MAP)."""
+
+    charges: int
+    """Initial charge count. -1 = unlimited."""
+
+    time_based: bool
+    """True if this is a time-based consumable (energy bar, not charges)."""
+
+    max_capacity: float = 0.0
+    """For time-based: total capacity in seconds."""
+
+    regen_rate: float = 0.0
+    """For time-based: capacity regen per second when inactive."""
+
+
+def compute_initial_charges_from_data(
+    gameparams: dict,
+    modernizations: dict[int, dict],
+    crews: dict[int, dict],
+    ship_id: int,
+    consumable_ids: list[int],
+    modernization_ids: list[int],
+    learned_skill_ids: list[int],
+    crew_id: int,
+) -> dict[int, ConsumableChargeInfo]:
+    """Compute initial consumable charge info per cons_type_id.
+
+    Returns {cons_type_id: ConsumableChargeInfo}.
+
+    For charge-based consumables: charges = initial count (with modifiers).
+    For time-based consumables: charges = -1, max_capacity = total seconds.
+
+    Args:
+        gameparams: Full decoded GameParams dict.
+        modernizations: {gp_id: entity dict} pre-indexed.
+        crews: {gp_id: entity dict} pre-indexed.
+        ship_id: Ship GameParams ID.
+        consumable_ids: Equipped consumable GameParams IDs (from ShipConfig).
+        modernization_ids: Equipped modernization GameParams IDs.
+        learned_skill_ids: Learned captain skill type IDs.
+        crew_id: GameParams crew ID.
+    """
+    # Build ability_id → entity lookup
+    ability_by_id: dict[int, dict] = {}
+    for _, obj in gameparams.items():
+        if not isinstance(obj, dict):
+            continue
+        ti = obj.get("typeinfo")
+        if isinstance(ti, dict) and ti.get("type") == "Ability":
+            aid = obj.get("id")
+            if aid is not None:
+                ability_by_id[aid] = obj
+
+    # Find the ship entity to get ability variants
+    ship_entity: dict | None = None
+    for _, obj in gameparams.items():
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("id") == ship_id:
+            ti = obj.get("typeinfo")
+            if isinstance(ti, dict) and ti.get("type") == "Ship":
+                ship_entity = obj
+                break
+
+    # Map ability_id → (cons_type_id, variant_name) using ship's ShipAbilities
+    ability_to_variant: dict[int, str] = {}
+    if ship_entity:
+        sa = ship_entity.get("ShipAbilities", {})
+        for slot_key in sa:
+            slot_val = sa[slot_key]
+            abils = slot_val.get("abils", []) if isinstance(slot_val, dict) else (
+                slot_val if isinstance(slot_val, list) else []
+            )
+            for opt in abils:
+                if isinstance(opt, (list, tuple)) and len(opt) >= 2:
+                    ability_name, variant_name = opt[0], opt[1]
+                    ab = ability_by_id.get(gameparams.get(ability_name, {}).get("id", -1))
+                    if ab is not None:
+                        ability_to_variant[ab.get("id", -1)] = variant_name
+
+    # Collect charge modifiers from modernizations
+    mod_additional_global = 0
+    mod_additional_typed: dict[str, int] = {}
+    for mid in modernization_ids:
+        data = modernizations.get(mid)
+        if data is None:
+            continue
+        modifiers = data.get("modifiers", {})
+        for key, val in modifiers.items():
+            if key == "additionalConsumables":
+                mod_additional_global += int(val)
+            elif key.endswith("AdditionalConsumables"):
+                cons_name = key.removesuffix("AdditionalConsumables")
+                mod_additional_typed[cons_name] = mod_additional_typed.get(cons_name, 0) + int(val)
+
+    # Collect charge modifiers from captain skills
+    skill_additional_global = 0
+    skill_additional_typed: dict[str, int] = {}
+    crew_data = crews.get(crew_id)
+    if crew_data and learned_skill_ids:
+        skills = crew_data.get("Skills", {})
+        for _skill_name, skill in skills.items():
+            if not isinstance(skill, dict):
+                continue
+            skill_type = skill.get("skillType")
+            if skill_type is None or skill_type not in learned_skill_ids:
+                continue
+            modifiers = skill.get("modifiers", {})
+            for key, val in modifiers.items():
+                if key == "additionalConsumables":
+                    skill_additional_global += int(val)
+                elif key.endswith("AdditionalConsumables"):
+                    cons_name = key.removesuffix("AdditionalConsumables")
+                    skill_additional_typed[cons_name] = skill_additional_typed.get(cons_name, 0) + int(val)
+
+    # Reverse lookup: consumableType string → cons_type_id
+    type_name_to_id: dict[str, int] = {v: k for k, v in CONSUMABLE_TYPE_ID_MAP.items()}
+
+    # Compute per-consumable charges
+    result: dict[int, int] = {}
+    for cons_gp_id in consumable_ids:
+        ab = ability_by_id.get(cons_gp_id)
+        if ab is None:
+            continue
+
+        # Find the correct variant for this ship
+        variant_name = ability_to_variant.get(cons_gp_id, "")
+        variant = ab.get(variant_name, {}) if variant_name else {}
+        if not isinstance(variant, dict) or "numConsumables" not in variant:
+            # Fallback: find any variant with numConsumables
+            for key, val in ab.items():
+                if isinstance(val, dict) and "numConsumables" in val:
+                    variant = val
+                    break
+
+        is_time_based = variant.get("lifeCycleType") == 1
+        base_charges = variant.get("numConsumables", -1)  # -1 = unlimited (or time-based)
+
+        # Get consumableType directly from variant (no pattern matching)
+        cons_type_name = variant.get("consumableType", "")
+        cons_type_id = type_name_to_id.get(cons_type_name, -1)
+
+        if cons_type_id < 0:
+            continue
+
+        if is_time_based:
+            result[cons_type_id] = ConsumableChargeInfo(
+                cons_type_id=cons_type_id,
+                charges=-1,
+                time_based=True,
+                max_capacity=float(variant.get("maxCapacity", 0)),
+                regen_rate=float(variant.get("capacityRegenCoeff", 0)),
+            )
+            continue
+
+        if base_charges == -1:
+            # Unlimited charge-based
+            result[cons_type_id] = ConsumableChargeInfo(
+                cons_type_id=cons_type_id, charges=-1, time_based=False,
+            )
+            continue
+
+        # Apply charge modifiers
+        effective = base_charges + mod_additional_global + skill_additional_global
+        effective += mod_additional_typed.get(cons_type_name, 0)
+        effective += skill_additional_typed.get(cons_type_name, 0)
+
+        result[cons_type_id] = ConsumableChargeInfo(
+            cons_type_id=cons_type_id, charges=max(0, effective), time_based=False,
+        )
+
+    return result
 
 
 def _compute_reloads(
