@@ -67,28 +67,45 @@ def parse_ship_config(raw: bytes | str) -> ShipConfig | None:
 
     vals = [struct.unpack_from("<I", raw, 12 + i * 4)[0] for i in range(num_entries)]
 
-    # Parse count-prefixed sections
-    sections: list[list[int]] = []
-    idx = 0
-    while idx < num_entries:
-        count = vals[idx]
-        idx += 1
-        if idx + count > num_entries:
-            # Last value isn't a count — it's the tail
-            break
-        section = vals[idx : idx + count]
-        idx += count
-        sections.append(section)
-
+    # Parse with special handling for Exteriors section which has extra
+    # trailing data (autobuy flag + colorSchemes key/value pairs).
+    #
+    # Layout (from decompiled ShipConfigDescription + ShipConfig):
+    #   Units(count+ids) → Modernizations(count+ids) →
+    #   Exteriors(count+ids) + autobuy(1) + colorSchemes(count + k/v pairs) →
+    #   Abilities(count+ids) → Ensigns(count+ids) →
+    #   Ecoboosts(count+ids) + autobuy(1) →
+    #   BattleCards(count+ids) → navalFlagId(1) → tail
     config = ShipConfig(ship_params_id=ship_params_id)
 
-    if len(sections) > 0:
-        config.units = [v for v in sections[0] if v != 0]
-    if len(sections) > 2:
-        config.modernizations = [v for v in sections[2] if v != 0]
-    if len(sections) > 3:
-        config.exteriors = [v for v in sections[3] if v != 0]
-    if len(sections) > 6:
-        config.consumables = [v for v in sections[6] if v != 0]
+    idx = 0
+
+    def read_section() -> list[int]:
+        nonlocal idx
+        if idx >= num_entries:
+            return []
+        count = vals[idx]
+        idx += 1
+        if count > 200 or idx + count > num_entries:
+            return []
+        section = vals[idx : idx + count]
+        idx += count
+        return section
+
+    # Units
+    config.units = [v for v in read_section() if v != 0]
+    # Reserved (always empty)
+    read_section()
+    # Modernizations
+    config.modernizations = [v for v in read_section() if v != 0]
+    # Exteriors + autobuy + colorSchemes
+    config.exteriors = [v for v in read_section() if v != 0]
+    if idx < num_entries:
+        idx += 1  # autobuy flag
+    if idx < num_entries:
+        cs_count = vals[idx]; idx += 1  # color scheme count
+        idx += min(cs_count, 50) * 2    # key/value pairs
+    # Abilities (consumables)
+    config.consumables = [v for v in read_section() if v != 0]
 
     return config
