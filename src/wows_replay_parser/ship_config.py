@@ -7,19 +7,13 @@ signal flags (Exteriors), and consumables (Abilities).
 Wire format (version 1):
     version(u32) + shipParamsId(u32) + numEntries(u32) + entries(u32 * N)
 
-The entries array contains count-prefixed sub-arrays:
-    [0]  Units:          count + u32[count]  (14 slots: hull, artillery, etc.)
-    [1]  (reserved):     count + u32[count]  (usually empty)
-    [2]  Modernizations: count + u32[count]  (equipped upgrades, GP IDs)
-    [3]  Exteriors:      count + u32[count]  (signal flags + camouflage, GP IDs)
-    [4]  (reserved):     count + u32[count]
-    [5]  (reserved):     count + u32[count]
-    [6]  Consumables:    count + u32[count]  (equipped abilities, GP IDs, 0=empty slot)
-    [7]  (reserved):     count + u32[count]
-    [8]  (reserved):     count + u32[count]
-    [9]  (reserved):     count + u32[count]
-    [10] (reserved):     count + u32[count]
-    tail: u32                                (unknown — possibly crew skill points)
+The entries array is NOT uniform count-prefixed sections. The Exteriors
+section has extra trailing data (autobuy + colorSchemes). Actual layout:
+    Units(count+ids) → reserved(count+ids, usually empty) →
+    Modernizations(count+ids) →
+    Exteriors(count+ids) + autobuy(u32) + colorSchemes(count + k/v u32 pairs) →
+    Abilities(count+ids, 0=empty slot) → Ensigns → Ecoboosts+autobuy →
+    BattleCards → navalFlagId → tail
 
 Unit type indices (from ShipConfigConstants.UNIT_TYPE_NAMES):
     0=hull, 1=engine, 2=fireControl, 3=flightControl, 4=fighter,
@@ -104,7 +98,7 @@ def parse_ship_config(raw: bytes | str) -> ShipConfig | None:
         idx += 1  # autobuy flag
     if idx < num_entries:
         cs_count = vals[idx]; idx += 1  # color scheme count
-        idx += min(cs_count, 50) * 2    # key/value pairs
+        idx = min(idx + min(cs_count, 50) * 2, num_entries)  # key/value pairs
     # Abilities (consumables)
     config.consumables = [v for v in read_section() if v != 0]
 
