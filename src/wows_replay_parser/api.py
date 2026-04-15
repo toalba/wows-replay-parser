@@ -4,11 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import pickle
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
+
+from wows_replay_parser.events.models import MinimapVisionEvent
+from wows_replay_parser.packets.types import PacketType
 
 from wows_replay_parser.events.models import BattleResultsEvent, GameEvent
 from wows_replay_parser.events.stream import EventStream
@@ -19,7 +24,7 @@ from wows_replay_parser.gamedata.schema_builder import SchemaBuilder
 from wows_replay_parser.packets.decoder import PacketDecoder
 from wows_replay_parser.packets.type_id_detector import detect_type_id_mapping
 from wows_replay_parser.replay.reader import ReplayReader
-from wows_replay_parser.roster import PlayerInfo, build_roster, extract_arena_extras
+from wows_replay_parser.roster import PlayerInfo, build_roster, extract_arena_extras, extract_arena_unique_id
 from wows_replay_parser.state.tracker import GameStateTracker
 
 _log = logging.getLogger(__name__)
@@ -216,6 +221,235 @@ class ParsedReplay:
         hi = bisect_right(timestamps, end)
         return self.events[lo:hi]
 
+    # ------------------------------------------------------------------
+    # Precomputed renderer helpers (all lazy via @cached_property).
+    # These mirror logic previously duplicated in wows-renderer layers.
+    # Kept on ParsedReplay (not only MergedReplay) so the single-render
+    # path gets the same speedup and renderers can accept a generic
+    # ReplaySource. See src/wows_replay_parser/interfaces.py.
+    # ------------------------------------------------------------------
+
+    @cached_property
+    def battle_start_time(self) -> float | None:
+        """Timestamp where ``battleStage`` transitioned to 0, or ``None``."""
+        return self._tracker.battle_start_time
+
+    @cached_property
+    def first_seen(self) -> dict[int, float]:
+        """entity_id → earliest real-visibility timestamp.
+
+        Mirrors renderer/layers/base.py ``_build_first_seen`` logic:
+        - For every entity with a position history, seed with the first
+          position timestamp (skipping pre-battle fakes at t < 1.0 when
+          any later frame exists).
+        - For entities that also have MinimapVisionEvents, take the
+          minimum of first-spotted vs. first real position (enemies are
+          routinely spotted before their position packets arrive).
+        """
+        tracker = self._tracker
+        positions = tracker.positions_dict
+        minimap = tracker.minimap_positions_dict
+
+        # Bucket MinimapVisionEvents by vehicle_entity_id for O(1) lookup.
+        vision_first: dict[int, float] = {}
+        for ev in self.events:
+            if isinstance(ev, MinimapVisionEvent):
+                eid = ev.vehicle_entity_id
+                if eid not in vision_first:
+                    vision_first[eid] = ev.timestamp
+
+        result: dict[int, float] = {}
+        for entity_id, pos_list in positions.items():
+            if not pos_list:
+                continue
+            # First "real" position (skip t<1.0 pre-battle seeds if
+            # there's a later one).
+            first_pos_t = float("inf")
+            for pos in pos_list:
+                if pos[0] >= 1.0:
+                    first_pos_t = pos[0]
+                    break
+            if first_pos_t == float("inf"):
+                first_pos_t = pos_list[0][0]
+
+            first_vision_t = float("inf")
+            mm_entries = minimap.get(entity_id, [])
+            for entry in mm_entries:
+                # (t, wx, wz, heading, is_visible, is_disappearing)
+                if entry[4] and not entry[5]:
+                    first_vision_t = entry[0]
+                    break
+            if first_vision_t == float("inf"):
+                first_vision_t = vision_first.get(entity_id, float("inf"))
+
+            result[entity_id] = min(first_pos_t, first_vision_t)
+        return result
+
+    @cached_property
+    def aim_yaw_timeline(self) -> dict[int, list[tuple[float, float]]]:
+        """Vehicle entity_id → sorted ``[(t, yaw_rad)]`` from ``targetLocalPos``.
+
+        Mirrors renderer/layers/ships.py ``_build_target_yaw_timeline``:
+        the property value is a packed int where the low byte encodes
+        the aim yaw as ``(lo / 256) * 2π - π``.
+        """
+        two_pi = 2.0 * math.pi
+        result: dict[int, list[tuple[float, float]]] = {}
+        for change in self._tracker.property_changes_by_name("targetLocalPos"):
+            val = change.new_value
+            if val is None or val == 65535:
+                continue
+            try:
+                lo = int(val) & 0xFF
+            except (TypeError, ValueError):
+                continue
+            yaw = (lo / 256.0) * two_pi - math.pi
+            result.setdefault(change.entity_id, []).append(
+                (change.timestamp, yaw),
+            )
+        # property_changes_by_name already returns history order
+        # (ascending timestamp); keep explicit sort for safety.
+        for timeline in result.values():
+            timeline.sort(key=lambda tv: tv[0])
+        return result
+
+    @cached_property
+    def camera_yaw_timeline(self) -> list[tuple[float, float]] | None:
+        """Sorted ``[(t, yaw_rad)]`` from CAMERA packet quaternions, or ``None``.
+
+        Mirrors renderer/layers/ships.py ``_build_camera_yaw_timeline``.
+        Returns ``None`` when no CAMERA packets are present (common for
+        non-recording-player perspectives in ``MergedReplay``).
+        """
+        out: list[tuple[float, float]] = []
+        for packet in self.packets:
+            if packet.type != PacketType.CAMERA:
+                continue
+            rot = getattr(packet, "camera_rotation", None)
+            if rot is None:
+                continue
+            qx, qy, qz, qw = rot
+            siny_cosp = 2.0 * (qw * qy + qx * qz)
+            cosy_cosp = 1.0 - 2.0 * (qy * qy + qx * qx)
+            yaw = math.atan2(siny_cosp, cosy_cosp)
+            out.append((packet.timestamp, yaw))
+        if not out:
+            return None
+        out.sort(key=lambda tv: tv[0])
+        return out
+
+    @cached_property
+    def smoke_screen_lifetimes(self) -> dict[int, tuple[float, float]]:
+        """SmokeScreen entity_id → ``(spawn_t, leave_t)``.
+
+        ``leave_t`` falls back to :attr:`duration` if the entity was
+        still present when the replay ended (no EntityLeave packet).
+        """
+        tracker = self._tracker
+        out: dict[int, tuple[float, float]] = {}
+        for eid in tracker.get_entities_by_type("SmokeScreen"):
+            spawn_t = tracker.first_position_timestamp(eid)
+            if spawn_t is None:
+                spawn_t = 0.0
+            leave_t = tracker.get_entity_leave_time(eid)
+            if leave_t is None:
+                leave_t = self.duration
+            out[eid] = (spawn_t, leave_t)
+        return out
+
+    @cached_property
+    def zone_positions(
+        self,
+    ) -> dict[int, list[tuple[float, float, float]]]:
+        """InteractiveZone entity_id -> ``[(t, x, z)]`` position samples.
+
+        Covers capture points, buff drop zones, weather zones, wards, and
+        any other ``InteractiveZone`` entity. Samples come from the
+        tracker's position history (populated from Position 0x0A and
+        NonVolatilePosition 0x2A packets). If the zone is static after
+        creation, the list will contain a single sample seeded from
+        :meth:`GameStateTracker.first_position_timestamp`.
+        """
+        tracker = self._tracker
+        positions = tracker.positions_dict
+        out: dict[int, list[tuple[float, float, float]]] = {}
+        for eid in tracker.get_entities_by_type("InteractiveZone"):
+            samples: list[tuple[float, float, float]] = []
+            pos_list = positions.get(eid, [])
+            for entry in pos_list:
+                # entry = (timestamp, (x, y, z), yaw)
+                t, pos, _ = entry
+                samples.append((t, pos[0], pos[2]))
+            if not samples:
+                # No Position/NonVolatilePosition samples — fall back to
+                # whatever position_at can resolve at the zone's earliest
+                # known time (typically the ENTITY_CREATE inline position).
+                seed_t = tracker.first_position_timestamp(eid)
+                if seed_t is None:
+                    seed_t = tracker.battle_start_time or 0.0
+                pos = tracker.position_at(eid, seed_t)
+                if pos is not None and (pos[0] != 0.0 or pos[2] != 0.0):
+                    samples.append((seed_t, pos[0], pos[2]))
+            # If still empty, skip the entity — never emit a misleading
+            # (0, 0) sample that the renderer would treat as a real pos.
+            if samples:
+                out[eid] = samples
+        return out
+
+    @cached_property
+    def zone_lifetimes(self) -> dict[int, tuple[float, float]]:
+        """InteractiveZone entity_id -> ``(spawn_t, leave_t)``.
+
+        Mirrors :attr:`smoke_screen_lifetimes` for ``InteractiveZone``
+        entities. ``leave_t`` falls back to :attr:`duration` if the
+        entity was still present when the replay ended.
+        """
+        tracker = self._tracker
+        out: dict[int, tuple[float, float]] = {}
+        for eid in tracker.get_entities_by_type("InteractiveZone"):
+            spawn_t = tracker.first_position_timestamp(eid)
+            if spawn_t is None:
+                spawn_t = 0.0
+            leave_t = tracker.get_entity_leave_time(eid)
+            if leave_t is None:
+                leave_t = self.duration
+            out[eid] = (spawn_t, leave_t)
+        return out
+
+    @cached_property
+    def consumable_activations(
+        self,
+    ) -> dict[int, list[tuple[float, int, float]]]:
+        """Vehicle entity_id -> ``[(activated_at, consumable_id, duration)]``.
+
+        Preserves the shape returned by
+        :meth:`GameStateTracker.get_consumable_activations`.
+        """
+        tracker = self._tracker
+        out: dict[int, list[tuple[float, int, float]]] = {}
+        for eid in tracker.get_vehicle_entity_ids():
+            acts = tracker.get_consumable_activations(eid)
+            if acts:
+                out[eid] = acts
+        return out
+
+    @cached_property
+    def crew_modifiers(self) -> dict[int, object]:
+        """Vehicle entity_id → raw ``crewModifiersCompactParams`` value.
+
+        Same value team_roster.py / build_export.py read via
+        ``tracker.get_entity_props(eid).get("crewModifiersCompactParams")``.
+        Entities without the property are skipped entirely.
+        """
+        tracker = self._tracker
+        out: dict[int, object] = {}
+        for eid in tracker.get_vehicle_entity_ids():
+            props = tracker.get_entity_props(eid)
+            val = props.get("crewModifiersCompactParams")
+            if val is not None:
+                out[eid] = val
+        return out
+
 
 def parse_replay(
     replay_path: str | Path,
@@ -344,6 +578,12 @@ def parse_replay(
     arena_extras = extract_arena_extras(
         packets, gamedata_path=gamedata_path, arena_blobs=arena_blobs,
     )
+
+    # Surface arenaUniqueId in meta for match-identity consumers (e.g. merge_replays).
+    # The JSON header doesn't carry it; it arrives in the onArenaStateReceived packet.
+    arena_uid = extract_arena_unique_id(packets)
+    if arena_uid is not None:
+        replay.meta["arenaUniqueId"] = arena_uid
 
     # Compute duration from max packet timestamp
     duration = max((p.timestamp for p in packets), default=0.0)

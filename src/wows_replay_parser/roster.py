@@ -318,6 +318,26 @@ def _find_arena_state_packet(
     return None
 
 
+def extract_arena_unique_id(packets: list[Packet]) -> int | None:
+    """Extract arenaUniqueId (INT64) from the onArenaStateReceived packet.
+
+    Layout after the 12-byte method header: arenaUniqueId(8 LE) + teamBuildTypeId(1)
+    + pickle BLOBs. Returns None if the packet can't be located or decoded.
+    """
+    import struct
+
+    packet = _find_arena_state_packet(packets)
+    if packet is None:
+        return None
+    raw = packet.raw_payload
+    if len(raw) < 20:
+        return None
+    try:
+        return int(struct.unpack_from("<q", raw, 12)[0])
+    except struct.error:
+        return None
+
+
 def _match_via_arena_state(
     vehicles: list[dict[str, Any]],
     packets: list[Packet],
