@@ -1,11 +1,8 @@
 """
 Packet type definitions for the BigWorld network protocol.
 
-Values verified against:
-- landaire/wows-toolkit (crates/wows-replays, packet2.rs)
-- Monstrofil/replays_unpack (post-12.6 mapping)
-
-Uses the >=12.6.0 mapping. Older replays may use different values.
+Uses the >=12.6.0 packet type mapping. Older replays may use different
+values; this mapping has been verified against real post-14.6 replays.
 """
 
 from __future__ import annotations

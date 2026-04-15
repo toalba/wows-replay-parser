@@ -318,6 +318,15 @@ mypy src/
 
 ---
 
+## Related projects
+
+Other community projects in the World of Warships replay-parsing space:
+
+- [`landaire/wows-toolkit`](https://github.com/landaire/wows-toolkit) — Rust replay parser and tooling.
+- [`Monstrofil/replays_unpack`](https://github.com/Monstrofil/replays_unpack) — older Python reference implementation (unmaintained).
+
+---
+
 ## License
 
 MIT

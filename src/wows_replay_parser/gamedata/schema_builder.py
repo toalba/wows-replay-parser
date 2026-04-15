@@ -1,7 +1,7 @@
 """
 Builds `construct` schemas dynamically from entity definitions + alias registry.
 
-BigWorld serialization encoding (verified against landaire/wows-toolkit):
+BigWorld serialization encoding (verified against real replays):
 
 ARRAY count prefix:
   Always u8 (at ALL nesting levels). No VLH escalation for array counts.

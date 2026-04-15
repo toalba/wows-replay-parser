@@ -1159,7 +1159,6 @@ def _build_ammo_lookup(gamedata_path: str | Path | None) -> dict[int, str]:
 
 
 # DamageStatWeapon: from mc15a2792.pyc enum_weapon, game version 15.1
-# Source: wows-toolkit/crates/wowsunpack/src/game_constants.rs
 _DAMAGE_STAT_WEAPONS: dict[int, str] = {
     0: "DEFAULT", 1: "MAIN_AP", 2: "MAIN_HE", 3: "ATBA_AP", 4: "ATBA_HE",
     5: "MAIN_AI_AP", 6: "MAIN_AI_HE", 7: "TORPEDO", 8: "ANTIAIR", 9: "SCOUT",

@@ -19,9 +19,9 @@ Packet types (from Monstrofil/replays_unpack + lkolbly/wows-replays):
 - 0x22: Camera position
 - 0x27: Player orientation
 
-NOTE: Exact packet type values need verification against
-landaire/wows-toolkit source. The BigWorld protocol is not
-publicly documented and varies between engine versions.
+NOTE: The BigWorld protocol is not publicly documented and varies
+between engine versions. Exact packet type values are verified against
+real replays at parse time.
 """
 
 from wows_replay_parser.packets.decoder import PacketDecoder

@@ -211,7 +211,6 @@ def decode_ship_config(data: bytes) -> Any:
       IsOwned: u32
       LastBoardedCrew: commander/captain GameParamId
 
-    Reference: wows-toolkit/crates/wowsunpack/src/data/ship_config.rs
     """
     if len(data) < 12:
         return data

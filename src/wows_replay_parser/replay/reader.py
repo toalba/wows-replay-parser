@@ -1,10 +1,6 @@
 """
 Reads .wowsreplay files: JSON header blocks + encrypted/compressed packet stream.
 
-References:
-- landaire/wows-toolkit (crates/wows-replays)
-- Monstrofil/replays_unpack (replay_reader.py)
-
 Decryption:
 - Blowfish ECB with known key
 - Non-standard CBC: each decrypted block XORed with the previous
@@ -25,7 +21,7 @@ from typing import Any
 # Verified magic number from real replay files
 REPLAY_MAGIC = 0x11_34_32_12
 
-# Blowfish decryption key (from Monstrofil / wows-toolkit)
+# Blowfish decryption key (known WoWs client constant)
 BLOWFISH_KEY = bytes([
     0x29, 0xB7, 0xC9, 0x09, 0x38, 0x3F, 0x84, 0x88,
     0xFA, 0x98, 0xEC, 0x4E, 0x13, 0x19, 0x79, 0xFB,

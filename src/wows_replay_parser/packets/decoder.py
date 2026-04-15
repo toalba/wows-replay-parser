@@ -1,7 +1,7 @@
 """
 Decodes the binary packet stream from a decompressed replay.
 
-Packet header format (verified against landaire/wows-toolkit):
+Packet header format (verified against real replays):
 - uint32 LE: payload_size (bytes after header)
 - uint32 LE: packet_type
 - float32 LE: clock (game time in seconds)
@@ -1220,7 +1220,7 @@ class PacketDecoder:
         """
         Map (0x28, >=12.6) — map/arena info.
 
-        Layout (verified against wows-toolkit parse_map_packet):
+        Layout:
             space_id(u32) + arena_id(i64) + unknown1(u32) + unknown2(u32) +
             blob(128 bytes) + map_name_len(u32) + map_name(str) +
             matrix(4x4 f32, 64 bytes) + unknown(u8)
