@@ -36,7 +36,16 @@ pip install "wows-replay-parser[cli]"
 
 ### Get gamedata
 
+The parser needs the game's entity definition files (`.def` + `alias.xml`)
+to build binary schemas at runtime.
+
+> **Note:** A sanitized public `wows-gamedata` repo is in preparation.
+> Until then, extract the relevant directories from your own World of
+> Warships installation (e.g. via `wowsunpack`) and point
+> `gamedata_path` at `…/scripts_entity/entity_defs`.
+
 ```bash
+# Once the public repo lands:
 git clone https://github.com/toalba/wows-gamedata.git
 ```
 

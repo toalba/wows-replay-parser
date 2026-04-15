@@ -7,12 +7,20 @@ this module can fetch and checkout the matching tag automatically.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from pathlib import Path  # noqa: TC003 — used at runtime in function signatures
 
 log = logging.getLogger(__name__)
 
-GAMEDATA_REPO_URL = "git@github.com:toalba/wows-gamedata.git"
+# Override via GAMEDATA_REPO_URL env var to point at your own mirror.
+# Default is a placeholder that won't resolve for public users — auto-sync
+# is a maintainer convenience; end users should extract gamedata from
+# their WoWs install and point GAMEDATA_PATH at it.
+GAMEDATA_REPO_URL = os.environ.get(
+    "GAMEDATA_REPO_URL",
+    "https://github.com/toalba/wows-gamedata.git",
+)
 
 
 def extract_build_id(game_version: str) -> str | None:
