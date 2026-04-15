@@ -1,28 +1,13 @@
-"""Integration tests using real replay + gamedata files."""
+"""Integration tests using real replay + gamedata files.
+
+Replay and gamedata paths are resolved by the shared conftest fixtures.
+When no fixtures are available these tests skip cleanly — see
+``tests/fixtures/README.md`` for how to populate them.
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-
-# Paths relative to project root
-PROJECT_ROOT = Path(__file__).parent.parent
-REPLAY_FILE = PROJECT_ROOT / "20260322_172639_PHSC710-Prins-Van-Oranje_56_AngelWings.wowsreplay"
-GAMEDATA_DIR = PROJECT_ROOT / "wows-gamedata" / "data" / "scripts_entity" / "entity_defs"
-
-
-@pytest.fixture(scope="session")
-def parsed_replay():
-    """Parse the test replay file (session-scoped to avoid repeated parsing)."""
-    if not REPLAY_FILE.exists():
-        pytest.skip("No replay file available")
-    if not GAMEDATA_DIR.exists():
-        pytest.skip("No gamedata directory available")
-
-    from wows_replay_parser.api import parse_replay
-
-    return parse_replay(REPLAY_FILE, GAMEDATA_DIR)
 
 
 class TestReplayParsing:
@@ -83,16 +68,18 @@ class TestReplayParsing:
 
 
 class TestReplayReader:
-    def test_read_json_headers(self) -> None:
-        if not REPLAY_FILE.exists():
-            pytest.skip("No replay file available")
-
+    def test_read_json_headers(self, fixture_replay_path) -> None:
         from wows_replay_parser.replay.reader import ReplayReader
 
         reader = ReplayReader()
-        replay = reader.read(REPLAY_FILE)
+        replay = reader.read(fixture_replay_path)
 
         assert replay.meta is not None
         assert len(replay.packet_data) > 0
         assert replay.game_version
         assert replay.map_name
+
+
+# Preserve the module-level pytest import used as a signal that this file
+# intentionally participates in the conftest-driven skip protocol.
+_ = pytest

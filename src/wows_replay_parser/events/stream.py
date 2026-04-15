@@ -214,15 +214,31 @@ def _damage_from_receive_damages(pkt: Packet) -> list[DamageEvent]:
     )]
 
 
+def _coerce_chat_str(value: object) -> str:
+    """Normalize chat string fields: None → "", bytes → tolerant decode,
+    strip NULs. The underlying STRING schema already decodes bytes, but
+    older/partial payloads may still surface raw bytes or None."""
+    if value is None:
+        return ""
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            text = bytes(value).decode("utf-8")
+        except UnicodeDecodeError:
+            text = bytes(value).decode("latin-1")
+    else:
+        text = str(value)
+    return text.replace("\x00", "")
+
+
 def _chat(pkt: Packet) -> ChatEvent:
     """onChatMessage(0:PLAYER_ID sender, 1:STRING channel, 2:STRING body, 3:STRING extra)"""
     args = pkt.method_args or {}
     return ChatEvent(
         timestamp=pkt.timestamp,
         entity_id=pkt.entity_id,
-        sender_id=_get(args, "arg0"),
-        channel=_get(args, "arg1", ""),
-        message=_get(args, "arg2", ""),
+        sender_id=_get(args, "arg0") or 0,
+        channel=_coerce_chat_str(_get(args, "arg1", "")),
+        message=_coerce_chat_str(_get(args, "arg2", "")),
         raw_data=args,
     )
 

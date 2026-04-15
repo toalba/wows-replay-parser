@@ -5,6 +5,17 @@ end-user issues in `KNOWN_ISSUES.md`; release notes in `CHANGELOG.md`.
 
 ---
 
+## Continuous Integration
+
+Nightly canary (`.github/workflows/canary.yml`) clones the latest `wows-gamedata`
+tag and runs the full test suite against it. On failure it opens (or appends to)
+a `patch-regression` issue. When one appears: check the gamedata tag in the
+title, update the schemas / alias handling / constants for the new patch, and
+extend tests to cover the regression. On recovery the issue auto-closes.
+Required secret: `GAMEDATA_PAT` (see `.github/SECRETS.md`).
+
+---
+
 ## Project Overview
 
 Python library that parses World of Warships `.wowsreplay` files by deriving all

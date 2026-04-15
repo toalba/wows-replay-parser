@@ -11,3 +11,7 @@ build/
 .claude/
 wows-gamedata/
 *.wowsreplay
+
+# Test fixtures — see tests/fixtures/README.md
+tests/fixtures/replays/*.wowsreplay
+tests/fixtures/gamedata/

@@ -1,0 +1,145 @@
+name: Canary (patch regression)
+# Nightly: run tests against latest wows-gamedata tag; open patch-regression
+# issue on failure, close it on recovery.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"  # Daily at 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  canary-test:
+    runs-on: ubuntu-latest
+    outputs:
+      gamedata_tag: ${{ steps.checkout-gamedata.outputs.tag }}
+      skipped: ${{ steps.secret-check.outputs.skipped }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check GAMEDATA_PAT secret
+        id: secret-check
+        env:
+          GAMEDATA_PAT: ${{ secrets.GAMEDATA_PAT }}
+        run: |
+          if [ -z "$GAMEDATA_PAT" ]; then
+            echo "::warning::GAMEDATA_PAT secret not configured — skipping canary. See .github/SECRETS.md."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install uv
+        if: steps.secret-check.outputs.skipped != 'true'
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        if: steps.secret-check.outputs.skipped != 'true'
+        run: uv python install 3.12
+
+      - name: Install project
+        if: steps.secret-check.outputs.skipped != 'true'
+        run: uv sync --all-extras
+
+      - name: Clone wows-gamedata at latest tag
+        id: checkout-gamedata
+        if: steps.secret-check.outputs.skipped != 'true'
+        env:
+          GAMEDATA_PAT: ${{ secrets.GAMEDATA_PAT }}
+        run: |
+          set -euo pipefail
+          git clone --filter=blob:none --no-checkout \
+            "https://x-access-token:${GAMEDATA_PAT}@github.com/toalba/wows-gamedata.git" \
+            wows-gamedata
+          cd wows-gamedata
+          # Pick the latest tag by commit date (tags look like v15.2.0.12267945).
+          LATEST_TAG=$(git for-each-ref --sort=-creatordate --format='%(refname:short)' refs/tags | head -n1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "::error::No tags found in wows-gamedata"
+            exit 1
+          fi
+          git checkout "$LATEST_TAG"
+          echo "Checked out gamedata tag: $LATEST_TAG"
+          echo "tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Run pytest
+        id: pytest
+        if: steps.secret-check.outputs.skipped != 'true'
+        env:
+          GAMEDATA_PATH: ${{ github.workspace }}/wows-gamedata/data
+        run: |
+          set -o pipefail
+          uv run pytest tests/ -v --tb=short 2>&1 | tee pytest-output.txt
+
+      - name: Upload pytest output
+        if: always() && steps.secret-check.outputs.skipped != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-output
+          path: pytest-output.txt
+          if-no-files-found: ignore
+
+  report-failure:
+    needs: canary-test
+    if: failure() && needs.canary-test.outputs.skipped != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pytest-output
+          path: .
+        continue-on-error: true
+
+      - name: Open or update patch-regression issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.canary-test.outputs.gamedata_tag }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          {
+            echo "Canary failed against gamedata tag **${TAG}**."
+            echo ""
+            echo "Run: ${RUN_URL}"
+            echo ""
+            echo '<details><summary>pytest output (tail)</summary>'
+            echo '```'
+            [ -f pytest-output.txt ] && tail -c 60000 pytest-output.txt || echo "(no artifact)"
+            echo '```'
+            echo '</details>'
+          } > body.md
+          EXISTING=$(gh issue list --label patch-regression --state open --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body-file body.md
+          else
+            gh issue create --title "Patch regression: ${TAG}" \
+              --label patch-regression --label automated --body-file body.md
+          fi
+
+  close-on-recovery:
+    needs: canary-test
+    if: success() && needs.canary-test.outputs.skipped != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Close open patch-regression issue (if any)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.canary-test.outputs.gamedata_tag }}
+        run: |
+          set -euo pipefail
+          EXISTING=$(gh issue list --label patch-regression --state open --json number --jq '.[0].number' || true)
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "Canary green on tag ${TAG} — closing."
+            gh issue close "$EXISTING"
+          fi

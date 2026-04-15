@@ -400,20 +400,16 @@ def test_map_name_must_match() -> None:
 # ─────────────────────────── integration ───────────────────────────────
 
 
-PROJECT_ROOT = Path(__file__).parent.parent
-REPLAY_FILE = PROJECT_ROOT / "20260322_172639_PHSC710-Prins-Van-Oranje_56_AngelWings.wowsreplay"
-GAMEDATA_DIR = PROJECT_ROOT / "wows-gamedata" / "data" / "scripts_entity" / "entity_defs"
+def test_merge_same_replay_twice(fixture_replay_path, fixture_gamedata_path) -> None:
+    """Parse the canonical fixture twice and merge it with itself.
 
-
-def test_merge_same_replay_twice() -> None:
-    """Parse the canonical fixture twice and merge it with itself."""
-    if not REPLAY_FILE.exists() or not GAMEDATA_DIR.exists():
-        pytest.skip("fixture unavailable")
-
+    Skip behaviour lives in the conftest fixtures — see
+    ``tests/fixtures/README.md``.
+    """
     from wows_replay_parser.api import parse_replay
 
-    a = parse_replay(REPLAY_FILE, GAMEDATA_DIR)
-    b = parse_replay(REPLAY_FILE, GAMEDATA_DIR)
+    a = parse_replay(fixture_replay_path, fixture_gamedata_path)
+    b = parse_replay(fixture_replay_path, fixture_gamedata_path)
     merged = merge_replays(a, b)
 
     # state_at returns a GameState with >= ships of either side alone.

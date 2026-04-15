@@ -106,7 +106,11 @@ RIBBON_BUILDING_KILL = 18
 RIBBON_DETECTED = 19
 RIBBON_ASSIST = 54
 
-RIBBON_NAMES: dict[int, str] = {v: k for k, v in RIBBON_WIRE_IDS.items()}
+# NB: `RIBBON_WIRE_IDS` is already id→name. A previous version inverted it
+# into {name: id}, which silently broke `derive_ribbons()` (every lookup
+# fell through to the default). Keep this a straight alias so `.get(int_id)`
+# returns the ribbon name string.
+RIBBON_NAMES: dict[int, str] = dict(RIBBON_WIRE_IDS)
 # Also keep the old friendly names for display
 RIBBON_DISPLAY_NAMES: dict[int, str] = {
     0: "Main Battery Hit", 1: "Torpedo Hit", 2: "Bomb Hit",

@@ -32,6 +32,46 @@ from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 
 # ── Custom constructs for BigWorld wire format ─────────────────────
 
+def _decode_string_bytes(raw: bytes) -> str:
+    """Tolerant STRING decode for game-wire bytes.
+
+    The BigWorld wire format nominally declares STRING as UTF-8, but real
+    replays occasionally contain non-UTF8 payloads in chat messages (player
+    names re-encoded at the server, stray NULs, mojibake from Python 2
+    str handling). A strict UTF-8 decode raises UnicodeDecodeError, which
+    construct surfaces as a fatal parse failure — silently dropping the
+    whole method's args. This helper tries UTF-8 first, falls back to
+    latin-1 (never raises, 1:1 byte-to-codepoint), and strips NUL bytes
+    so downstream consumers don't choke on embedded control chars.
+    """
+    if not isinstance(raw, (bytes, bytearray)):
+        return raw  # type: ignore[return-value]
+    try:
+        text = bytes(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        text = bytes(raw).decode("latin-1")
+    # Strip NULs; leave other control chars alone (callers may want them).
+    if "\x00" in text:
+        text = text.replace("\x00", "")
+    return text
+
+
+class _RobustString(cs.Construct):
+    """Wraps a bytes-producing construct and tolerantly decodes to str."""
+
+    def __init__(self, subcon: cs.Construct[Any, Any]) -> None:
+        super().__init__()
+        self.subcon = subcon
+        self.flagbuildnone = getattr(subcon, "flagbuildnone", False)
+
+    def _parse(self, stream: Any, context: Any, path: str) -> Any:
+        raw = self.subcon._parsereport(stream, context, path)
+        return _decode_string_bytes(raw)
+
+    def _sizeof(self, context: Any, path: str) -> int:
+        return self.subcon._sizeof(context, path)
+
+
 class _MethodBlobPrefixed(cs.Construct):
     """Length-prefixed BLOB/STRING for method args.
 
@@ -363,9 +403,12 @@ class SchemaBuilder:
         """
         if in_method:
             if type_name in ("STRING", "UNICODE_STRING"):
-                return _MethodBlobPrefixed(cs.GreedyString("utf-8"))
+                # Read raw bytes then decode tolerantly (UTF-8 → latin-1
+                # fallback). Strict UTF-8 kills ~2/37 chat messages with
+                # non-ASCII player content.
+                return _RobustString(_MethodBlobPrefixed(cs.GreedyBytes))
             return _MethodBlobPrefixed(cs.GreedyBytes)
         else:
             if type_name in ("STRING", "UNICODE_STRING"):
-                return cs.PascalString(cs.Int32ul, "utf-8")
+                return _RobustString(cs.Prefixed(cs.Int32ul, cs.GreedyBytes))
             return cs.Prefixed(cs.Int32ul, cs.GreedyBytes)

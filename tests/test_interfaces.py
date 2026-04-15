@@ -1,29 +1,13 @@
-"""Tests for the ``ReplaySource`` Protocol and ``ParsedReplay`` helpers."""
+"""Tests for the ``ReplaySource`` Protocol and ``ParsedReplay`` helpers.
+
+Replay and gamedata paths are resolved by the shared conftest fixtures
+(``parsed_replay`` is an alias for ``parsed_fixture`` — see
+``tests/conftest.py``).
+"""
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import pytest
-
 from wows_replay_parser.interfaces import ReplaySource
-
-PROJECT_ROOT = Path(__file__).parent.parent
-REPLAY_FILE = PROJECT_ROOT / "20260322_172639_PHSC710-Prins-Van-Oranje_56_AngelWings.wowsreplay"
-GAMEDATA_DIR = PROJECT_ROOT / "wows-gamedata" / "data" / "scripts_entity" / "entity_defs"
-
-
-@pytest.fixture(scope="session")
-def parsed_replay():
-    """Parse the shared fixture replay (session-scoped)."""
-    if not REPLAY_FILE.exists():
-        pytest.skip("No replay file available")
-    if not GAMEDATA_DIR.exists():
-        pytest.skip("No gamedata directory available")
-
-    from wows_replay_parser.api import parse_replay
-
-    return parse_replay(REPLAY_FILE, GAMEDATA_DIR)
 
 
 def test_parsed_replay_is_replay_source(parsed_replay) -> None:
