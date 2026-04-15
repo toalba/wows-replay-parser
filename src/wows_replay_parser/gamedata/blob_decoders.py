@@ -227,7 +227,7 @@ def decode_ship_config(data: bytes) -> Any:
         return [r32() for _ in range(count)]
 
     try:
-        version = r32()
+        _version = r32()
         ship_params_id = r32()
         _element_count = r32()
 

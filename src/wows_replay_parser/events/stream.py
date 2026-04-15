@@ -19,9 +19,9 @@ if TYPE_CHECKING:
     from wows_replay_parser.state.tracker import GameStateTracker
 
 from wows_replay_parser.events.models import (
+    AAAuraStateEvent,
     AASectorEvent,
     AASectorQueueEvent,
-    AAAuraStateEvent,
     AchievementEvent,
     AirDefenseStateEvent,
     AirSupportEvent,
@@ -86,23 +86,23 @@ from wows_replay_parser.events.models import (
     ShipCracksEvent,
     ShipDisappearEvent,
     ShipPhysicsEvent,
-    ShutdownTimeEvent,
-    SkipBombEvent,
+    ShotCreatedEvent,
+    ShotDestroyedEvent,
     ShotTrackingEvent,
+    ShutdownTimeEvent,
+    SkillActivationEvent,
+    SkipBombEvent,
     SonarDetectionEvent,
     SonarHitEvent,
     SonarHitUpdateEvent,
     SonarPingEvent,
     SonarResetEvent,
     SonarWaveReceivedEvent,
-    ShotCreatedEvent,
-    ShotDestroyedEvent,
     SquadronEvent,
     SquadronHealthEvent,
     SquadronPlaneHealthEvent,
     SquadronRefreshEvent,
     SquadronSpawnEvent,
-    WeaponLockEvent,
     SquadronStateChangeEvent,
     SquadronStopManeuverEvent,
     SquadronUpdateDetailEvent,
@@ -119,10 +119,10 @@ from wows_replay_parser.events.models import (
     TracerEndEvent,
     TracerPositionEvent,
     TracerStartEvent,
-    UniqueTriggerEvent,
     UniqueSkillsEvent,
-    SkillActivationEvent,
+    UniqueTriggerEvent,
     WaveResetEvent,
+    WeaponLockEvent,
     WeaponReloadStateEvent,
     WeaponStateSwitchEvent,
     WorldStateReceivedEvent,
@@ -646,7 +646,7 @@ def _secondary_fire(pkt: Packet) -> SecondaryFireEvent:
 
 
 def _gun_state(pkt: Packet) -> GunStateEvent:
-    """syncGun(arg0: weapon_type, arg1: gun_id, arg2: yaw, arg3: pitch, arg4: alive, arg5: reload_perc, arg6: loaded_ammo)."""
+    """syncGun(weapon_type, gun_id, yaw, pitch, alive, reload_perc, loaded_ammo)."""
     args = pkt.method_args or {}
     return GunStateEvent(
         timestamp=pkt.timestamp,

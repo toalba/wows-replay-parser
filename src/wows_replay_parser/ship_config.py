@@ -97,7 +97,8 @@ def parse_ship_config(raw: bytes | str) -> ShipConfig | None:
     if idx < num_entries:
         idx += 1  # autobuy flag
     if idx < num_entries:
-        cs_count = vals[idx]; idx += 1  # color scheme count
+        cs_count = vals[idx]  # color scheme count
+        idx += 1
         idx = min(idx + min(cs_count, 50) * 2, num_entries)  # key/value pairs
     # Abilities (consumables)
     config.consumables = [v for v in read_section() if v != 0]

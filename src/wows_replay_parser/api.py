@@ -12,10 +12,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from wows_replay_parser.events.models import MinimapVisionEvent
-from wows_replay_parser.packets.types import PacketType
-
-from wows_replay_parser.events.models import BattleResultsEvent, GameEvent
+from wows_replay_parser.events.models import BattleResultsEvent, GameEvent, MinimapVisionEvent
 from wows_replay_parser.events.stream import EventStream
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry
 from wows_replay_parser.gamedata.def_loader import DefLoader
@@ -23,8 +20,14 @@ from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 from wows_replay_parser.gamedata.schema_builder import SchemaBuilder
 from wows_replay_parser.packets.decoder import PacketDecoder
 from wows_replay_parser.packets.type_id_detector import detect_type_id_mapping
+from wows_replay_parser.packets.types import PacketType
 from wows_replay_parser.replay.reader import ReplayReader
-from wows_replay_parser.roster import PlayerInfo, build_roster, extract_arena_extras, extract_arena_unique_id
+from wows_replay_parser.roster import (
+    PlayerInfo,
+    build_roster,
+    extract_arena_extras,
+    extract_arena_unique_id,
+)
 from wows_replay_parser.state.tracker import GameStateTracker
 
 _log = logging.getLogger(__name__)

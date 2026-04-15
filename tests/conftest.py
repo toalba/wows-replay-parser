@@ -129,7 +129,7 @@ def fixture_gamedata_path() -> Path:
 def parsed_fixture(
     fixture_replay_path: Path,
     fixture_gamedata_path: Path,
-) -> "ParsedReplay":
+) -> ParsedReplay:
     """Parsed fixture replay, shared across the test session.
 
     Parsing a real replay is expensive (multiple seconds); this fixture is
@@ -143,7 +143,7 @@ def parsed_fixture(
 
 # Back-compat alias — existing tests use ``parsed_replay``.
 @pytest.fixture(scope="session")
-def parsed_replay(parsed_fixture: "ParsedReplay") -> "ParsedReplay":
+def parsed_replay(parsed_fixture: ParsedReplay) -> ParsedReplay:
     """Alias for :func:`parsed_fixture`. Prefer ``parsed_fixture`` in new tests."""
     return parsed_fixture
 

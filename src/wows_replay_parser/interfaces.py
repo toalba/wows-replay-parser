@@ -38,25 +38,25 @@ class ReplaySource(Protocol):
     duration: float
     game_version: str
     meta: dict
-    players: "Sequence[PlayerInfo]"
-    events: "Sequence[GameEvent]"
+    players: Sequence[PlayerInfo]
+    events: Sequence[GameEvent]
 
     # --- Event / state queries ------------------------------------------
     def events_of_type(self, event_type: type[_T]) -> list[_T]: ...
 
-    def state_at(self, t: float) -> "GameState": ...
+    def state_at(self, t: float) -> GameState: ...
 
     def iter_states(
-        self, timestamps: "Sequence[float]",
-    ) -> "Iterator[GameState]": ...
+        self, timestamps: Sequence[float],
+    ) -> Iterator[GameState]: ...
 
     # --- Precomputed helpers (lazy on the concrete implementation) ------
     battle_start_time: float | None
-    first_seen: "Mapping[int, float]"
-    aim_yaw_timeline: "Mapping[int, list[tuple[float, float]]]"
-    camera_yaw_timeline: "Sequence[tuple[float, float]] | None"
-    smoke_screen_lifetimes: "Mapping[int, tuple[float, float]]"
-    zone_positions: "Mapping[int, Sequence[tuple[float, float, float]]]"
-    zone_lifetimes: "Mapping[int, tuple[float, float]]"
-    consumable_activations: "Mapping[int, Sequence[tuple[float, int, float]]]"
-    crew_modifiers: "Mapping[int, object]"
+    first_seen: Mapping[int, float]
+    aim_yaw_timeline: Mapping[int, list[tuple[float, float]]]
+    camera_yaw_timeline: Sequence[tuple[float, float]] | None
+    smoke_screen_lifetimes: Mapping[int, tuple[float, float]]
+    zone_positions: Mapping[int, Sequence[tuple[float, float, float]]]
+    zone_lifetimes: Mapping[int, tuple[float, float]]
+    consumable_activations: Mapping[int, Sequence[tuple[float, int, float]]]
+    crew_modifiers: Mapping[int, object]

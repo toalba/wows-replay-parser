@@ -176,7 +176,7 @@ class ShipConfigParser:
 
         # Exterior slots (has extra autobuy + colorSchemes)
         exteriors = read_section() if off + 4 <= len(data) else []
-        autobuy_info = read_u32() if off + 4 <= len(data) else 0
+        _autobuy_info = read_u32() if off + 4 <= len(data) else 0
         color_schemes: dict[int, int] = {}
         if off + 4 <= len(data):
             cs_count = read_u32()

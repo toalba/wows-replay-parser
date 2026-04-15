@@ -18,7 +18,7 @@ import logging
 import struct
 from collections import defaultdict
 
-from wows_replay_parser.gamedata.entity_registry import EntityRegistry, ResolvedEntity
+from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 
 log = logging.getLogger(__name__)
 

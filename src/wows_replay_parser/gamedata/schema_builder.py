@@ -26,9 +26,8 @@ import construct as cs
 
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry, TypeAlias
 from wows_replay_parser.gamedata.blob_decoders import decode_blob, decode_pickle, decode_zipped
-from wows_replay_parser.gamedata.def_loader import MethodDef, PropertyDef
+from wows_replay_parser.gamedata.def_loader import MethodDef
 from wows_replay_parser.gamedata.entity_registry import EntityRegistry
-
 
 # ── Custom constructs for BigWorld wire format ─────────────────────
 

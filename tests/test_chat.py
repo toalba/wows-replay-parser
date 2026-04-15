@@ -14,9 +14,9 @@ import construct as cs
 from wows_replay_parser.events.models import ChatEvent
 from wows_replay_parser.events.stream import _chat, _coerce_chat_str
 from wows_replay_parser.gamedata.schema_builder import (
+    _decode_string_bytes,
     _MethodBlobPrefixed,
     _RobustString,
-    _decode_string_bytes,
 )
 from wows_replay_parser.packets.types import Packet, PacketType
 
@@ -147,7 +147,7 @@ class TestCoerceChatStr:
         assert _coerce_chat_str(None) == ""
 
     def test_utf8_bytes(self) -> None:
-        assert _coerce_chat_str("ß".encode("utf-8")) == "ß"
+        assert _coerce_chat_str("ß".encode()) == "ß"
 
     def test_latin1_fallback_bytes(self) -> None:
         out = _coerce_chat_str(b"\xff\xfe")

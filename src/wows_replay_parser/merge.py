@@ -33,11 +33,11 @@ This applies uniformly to :meth:`MergedReplay.state_at` /
 
 from __future__ import annotations
 
+import logging
+import warnings
 from dataclasses import dataclass, field
 from functools import cached_property
 from typing import TYPE_CHECKING, TypeVar
-import logging
-import warnings
 
 from wows_replay_parser.interfaces import ReplaySource
 from wows_replay_parser.state.models import (
@@ -423,9 +423,7 @@ class MergedReplay:
         for c in battle_b.capture_points:
             idx = c.point_index
             ex = caps_by_index.get(idx)
-            if ex is None:
-                caps_by_index[idx] = c
-            elif _cap_richness(c) > _cap_richness(ex):
+            if ex is None or _cap_richness(c) > _cap_richness(ex):
                 caps_by_index[idx] = c
         merged_caps = [
             caps_by_index[k] for k in sorted(caps_by_index.keys())
@@ -480,7 +478,7 @@ class MergedReplay:
             return
         it_a = self.replay_a.iter_states(ts)
         it_b = self.replay_b.iter_states(ts)
-        for t, state_a, state_b in zip(ts, it_a, it_b):
+        for t, state_a, state_b in zip(ts, it_a, it_b, strict=False):
             yield self._merge_gamestate(state_a, state_b, t)
 
     # ------------------------------------------------------------------

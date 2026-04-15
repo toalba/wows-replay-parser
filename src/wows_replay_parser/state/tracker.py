@@ -1616,7 +1616,12 @@ class GameStateTracker:
             # Extract raw DROP_STATE from BattleLogic.state.drop
             drop_candidate = _container_get(bl_state, "drop")
             if drop_candidate is not None and drop_candidate != {}:
-                drop_raw = drop_candidate if isinstance(drop_candidate, dict) else dict(drop_candidate) if hasattr(drop_candidate, "items") else None
+                if isinstance(drop_candidate, dict):
+                    drop_raw = drop_candidate
+                elif hasattr(drop_candidate, "items"):
+                    drop_raw = dict(drop_candidate)
+                else:
+                    drop_raw = None
 
         return BattleState(
             battle_stage=int(bl_props.get("battleStage", 0)),

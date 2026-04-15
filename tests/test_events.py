@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from wows_replay_parser.events.models import (
-    CapturePointUpdateEvent,
     PositionEvent,
     PropertyUpdateEvent,
     RawEvent,

@@ -1,8 +1,6 @@
 """Tests for the gamedata loading layer."""
 
-from pathlib import Path
 
-import pytest
 
 
 class TestAliasRegistry:

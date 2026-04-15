@@ -13,14 +13,12 @@ real replay files.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
 
 import pytest
 
 from wows_replay_parser.events.models import GameEvent
 from wows_replay_parser.interfaces import ReplaySource
-from wows_replay_parser.merge import MergedReplay, merge_replays
+from wows_replay_parser.merge import merge_replays
 from wows_replay_parser.state.models import (
     BattleState,
     GameState,
@@ -167,7 +165,6 @@ def test_ships_ownership_preference() -> None:
     assert ships1.keys() == ships2.keys()
     # Ship eid 100 must appear exactly once (not collided to 100 + offset)
     # — per spec, when mapped, only one copy is kept.
-    B_OFFSET = 2**30
     assert 100 in ships1
     # If no mapping was set up (empty entity_mapping), collision prevention
     # should move b's ship to 100 + offset. Accept either outcome but

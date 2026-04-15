@@ -31,10 +31,28 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 target-version = "py311"
-line-length = 100
+line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "SIM", "TCH"]
+# Opinionated style rules we don't enforce: TYPE_CHECKING gymnastics for
+# runtime-imported names, uppercase locals in tests, and nit-picks in SIM
+# / B that reduce readability more than they help.
+ignore = [
+    "TC001",  # typing-only first-party import
+    "TC003",  # typing-only stdlib import
+    "N806",   # non-lowercase local (allowed for named constants in tests)
+    "SIM103", # needless bool
+    "SIM105", # contextlib.suppress over try/except/pass
+    "SIM108", # ternary over if/else
+    "SIM114", # combine if branches with or
+    "SIM202", # negate != op
+    "B007",   # unused loop control
+    "B019",   # cached_property on instance methods (intentional in our tracker)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["N806"]
 
 [tool.mypy]
 python_version = "3.11"
