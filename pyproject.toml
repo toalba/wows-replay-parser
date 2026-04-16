@@ -1,14 +1,45 @@
 [project]
 name = "wows-replay-parser"
-version = "0.1.0"
+version = "0.1.1"
 description = "World of Warships replay parser with dynamic schema loading from wows-gamedata"
+readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
+authors = [
+    { name = "toalba", email = "tb@kleinundpartner.at" },
+]
+keywords = [
+    "world-of-warships",
+    "wows",
+    "replay",
+    "parser",
+    "bigworld",
+    "game-tools",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Games/Entertainment",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
 dependencies = [
     "construct>=2.10",
     "lxml>=5.0",
     "pycryptodome>=3.20",
 ]
+
+[project.urls]
+Homepage = "https://github.com/toalba/wows-replay-parser"
+Documentation = "https://toalba.github.io/wows-replay-parser/"
+Repository = "https://github.com/toalba/wows-replay-parser"
+Issues = "https://github.com/toalba/wows-replay-parser/issues"
+Changelog = "https://github.com/toalba/wows-replay-parser/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
