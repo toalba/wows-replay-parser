@@ -15,3 +15,6 @@ wows-gamedata/
 # Test fixtures — see tests/fixtures/README.md
 tests/fixtures/replays/*.wowsreplay
 tests/fixtures/gamedata/
+
+# mkdocs build output
+/site/

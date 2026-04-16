@@ -21,6 +21,10 @@ cli = [
     "click>=8.0",
     "rich>=13.0",
 ]
+docs = [
+    "mkdocs-material>=9.5",
+    "mkdocstrings[python]>=0.24",
+]
 
 [project.scripts]
 wowsreplay = "wows_replay_parser.cli:main"

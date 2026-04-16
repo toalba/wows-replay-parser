@@ -44,10 +44,6 @@ to build binary schemas at runtime.
 > Warships installation (e.g. via `wowsunpack`) and point
 > `gamedata_path` at `…/scripts_entity/entity_defs`.
 
-```bash
-# Once the public repo lands:
-git clone https://github.com/toalba/wows-gamedata.git
-```
 
 ### Parse a replay
 
@@ -327,6 +323,15 @@ mypy src/
 
 ---
 
+## Contributing
+
+Bug reports, patches, and new event types welcome. See
+[`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md) for dev setup and
+[`.github/CODE_OF_CONDUCT.md`](.github/CODE_OF_CONDUCT.md) for expectations.
+Security issues: see [`SECURITY.md`](SECURITY.md).
+
+---
+
 ## Related projects
 
 Other community projects in the World of Warships replay-parsing space:
@@ -338,4 +343,4 @@ Other community projects in the World of Warships replay-parsing space:
 
 ## License
 
-MIT
+Apache 2.0 — see [`LICENSE`](LICENSE).

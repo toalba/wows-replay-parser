@@ -1,0 +1,42 @@
+name: Regression (patch break)
+description: A new WoWs game patch broke parsing. Often auto-filed by the canary workflow.
+title: "[Regression] "
+labels: ["patch-regression"]
+body:
+  - type: input
+    id: last-working
+    attributes:
+      label: Last known-working parser version / commit
+    validations:
+      required: true
+
+  - type: input
+    id: first-broken
+    attributes:
+      label: First broken commit / run URL
+      description: Ideally a link to the canary workflow run that caught it.
+    validations:
+      required: true
+
+  - type: input
+    id: patch-version
+    attributes:
+      label: WoWs patch version where the break appeared
+      description: e.g. "15.4.0.12400000" from the replay JSON header.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: A one-liner or short script that fails now but used to work.
+      render: python
+    validations:
+      required: true
+
+  - type: textarea
+    id: suspected-cause
+    attributes:
+      label: Suspected cause
+      description: E.g. a renamed property, a reordered method, a new packet type.

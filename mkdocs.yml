@@ -1,0 +1,79 @@
+site_name: wows-replay-parser
+site_description: Python library for parsing World of Warships .wowsreplay files.
+site_url: https://toalba.github.io/wows-replay-parser/
+repo_url: https://github.com/toalba/wows-replay-parser
+repo_name: toalba/wows-replay-parser
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: blue grey
+      accent: blue
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: blue grey
+      accent: light blue
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.action.edit
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_root_heading: true
+            show_source: false
+            merge_init_into_class: true
+            separate_signature: true
+            show_signature_annotations: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets:
+      base_path: ["."]
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Concepts:
+      - Parser Pipeline: concepts/parser-pipeline.md
+      - Event Stream: concepts/events.md
+      - Dual Perspective: concepts/dual-perspective.md
+      - Deep Dive: architecture.md
+  - API Reference:
+      - ParsedReplay: api/parsed-replay.md
+      - Events: api/events.md
+      - Merge: api/merge.md
+      - State Models: api/state.md
+  - Development:
+      - Contributing: development/contributing.md
+      - Security: development/security.md
+  - Changelog: changelog.md
