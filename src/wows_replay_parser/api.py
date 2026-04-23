@@ -12,7 +12,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar
 
-from wows_replay_parser.events.models import BattleResultsEvent, GameEvent, MinimapVisionEvent
+from wows_replay_parser.events.models import GameEvent, MinimapVisionEvent, RibbonEvent
 from wows_replay_parser.events.stream import EventStream
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry
 from wows_replay_parser.gamedata.def_loader import DefLoader
@@ -35,6 +35,7 @@ _log = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from wows_replay_parser.battle_results import BattleResults
     from wows_replay_parser.packets.types import Packet
     from wows_replay_parser.state.models import BattleState, GameState, ShipState
 
@@ -124,7 +125,6 @@ class ParsedReplay:
     prebattles_info: dict = field(default_factory=dict)
     observers: list = field(default_factory=list)
     buildings_info: list = field(default_factory=list)
-    battle_results: dict | None = None
 
     @property
     def tracker(self) -> GameStateTracker:
@@ -165,18 +165,19 @@ class ParsedReplay:
         """
         return self._tracker.iter_states(timestamps)
 
-    def recording_player_ribbons(self) -> list[GameEvent]:
-        """Get server-authoritative ribbons for the recording player.
+    def recording_player_ribbons(self) -> list[RibbonEvent]:
+        """Raw server-authoritative ribbon events for the recording player.
 
-        Extracts from privateVehicleState.ribbons (OWN_CLIENT property).
-        Each RibbonEvent has the exact timestamp and ribbon_id.
-        derived=False indicates these are server-authoritative, not guesses.
+        One event per server-side update to
+        ``Avatar.privateVehicleState.ribbons`` — matches the client's
+        ``Avatar.gRibbon.fire()`` callbacks. Useful for stats and analytics.
 
-        For other players' ribbons, use derive_ribbons() with self.events.
+        For the subset as the player actually saw popups on screen,
+        see :meth:`recording_player_ribbon_popups` which applies the
+        client's LIFE_TIME=6.0s popup coalescing.
         """
         from wows_replay_parser.ribbons import extract_recording_player_ribbons
 
-        # Find Avatar entity ID
         avatar_eid = self.tracker.get_avatar_entity_id()
         if avatar_eid is None:
             return []
@@ -184,6 +185,53 @@ class ParsedReplay:
         return extract_recording_player_ribbons(
             self._tracker._history, avatar_eid,
         )
+
+    def recording_player_ribbon_popups(
+        self, window_sec: float | None = None
+    ) -> list[RibbonEvent]:
+        """Ribbon popups as the player actually saw them on screen.
+
+        Coalesces same-type ribbon events within the client's LIFE_TIME
+        window (default 6.0s) to match the on-screen popup the player
+        actually perceived: a ribbon animation that refreshes with each
+        new fire of the same type until it expires after 6s of quiet.
+
+        Each returned event's ``count`` is the final ``x N`` badge the
+        player saw on that specific popup before it faded.
+
+        Reverse-engineered from ``scripts/m102f8b9c/RibbonSystem.pyc``
+        (``__updateTempEntity`` + ``__getTempEntity``).
+
+        Args:
+            window_sec: Override the merge window. Defaults to the
+                client's ``LIFE_TIME = 6.0``.
+        """
+        from wows_replay_parser.ribbons import (
+            RIBBON_LIFE_TIME_SEC,
+            coalesce_ribbon_popups,
+        )
+
+        raw = self.recording_player_ribbons()
+        return coalesce_ribbon_popups(
+            raw,
+            window_sec=window_sec if window_sec is not None else RIBBON_LIFE_TIME_SEC,
+        )
+
+    def battle_results(self) -> BattleResults | None:
+        """Decode the post-battle results packet (0x22) into structured form.
+
+        Returns per-player stats (hits/damage by weapon type, module damage,
+        planes killed, etc.), battle metadata, and the recording player's
+        private economics. Returns None if the replay has no BattleResults
+        packet (incomplete / crashed replay).
+        """
+        from wows_replay_parser.battle_results import BattleResults
+        from wows_replay_parser.events.models import BattleResultsEvent
+
+        for ev in self.events:
+            if isinstance(ev, BattleResultsEvent):
+                return BattleResults.from_event(ev)
+        return None
 
     def own_player_vehicle_state(self, t: float) -> dict | None:
         """Get the recording player's privateVehicleState at time t.
@@ -591,13 +639,6 @@ def parse_replay(
     # Compute duration from max packet timestamp
     duration = max((p.timestamp for p in packets), default=0.0)
 
-    # Extract battle results from events (single 0x22 packet per replay)
-    battle_results: dict | None = None
-    for evt in events:
-        if isinstance(evt, BattleResultsEvent):
-            battle_results = evt.results
-            break
-
     return ParsedReplay(
         meta=replay.meta,
         players=players,
@@ -610,5 +651,4 @@ def parse_replay(
         prebattles_info=arena_extras["prebattles_info"],
         observers=arena_extras["observers"],
         buildings_info=arena_extras["buildings_info"],
-        battle_results=battle_results,
     )

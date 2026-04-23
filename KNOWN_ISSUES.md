@@ -57,6 +57,35 @@ a float (seconds). Needs verification against Vehicle.def.
 
 ---
 
+### M-3: Wire ribbon_id remapping in some game modes
+
+In a subset of replays (observed in one CB replay on AngelWings) the
+wire emits `ribbon_id=10` at positions where BattleResults'
+`tail[481 + ribbon_id]` lists the count under `MAIN_CALIBER_PENETRATION`
+(slot `481+15`). Our `recording_player_ribbons()` therefore labels 108
+events as `BASE_CAPTURE` while
+`battle_results().own_result.ribbon_counts()` reports
+BASE_CAPTURE=0 / MAIN_CALIBER_PENETRATION=108.
+
+Root cause unconfirmed. Possibilities:
+- Per-match Ribbon enum remapping driven by `battle_type` / `game_mode`.
+- Schema drift in `RIBBON_STATE` for specific game modes (e.g. an extra
+  field shifts our INT8 read).
+
+**Current recommendation:** trust
+`replay.battle_results().own_result.ribbon_counts()` for lifetime totals
+(reads `tail[481 + ribbon_id]`); treat
+`recording_player_ribbons()` labels as best-effort and cross-check
+against BR when counts look unusual.
+
+**Files:** `ribbons.py` — `RIBBON_WIRE_IDS`, `extract_recording_player_ribbons`.
+
+**Fix:** Dump raw bytes of the affected `privateVehicleState.ribbons`
+nested updates and manually decode to determine whether it's a schema
+or a remapping issue.
+
+---
+
 ## Nested Property Decode (98.7%)
 
 48 of 3,677 nested property packets remain unresolved. All are

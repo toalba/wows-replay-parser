@@ -1,27 +1,36 @@
-"""Ribbon extraction and derivation.
+"""Ribbon extraction for the recording player.
 
-Recording player ribbons: extracted from privateVehicleState.ribbons
-(server-authoritative cumulative counts, OWN_CLIENT property).
-Other players: derived from hit/damage events (approximate).
+Recording player only (OWN_CLIENT property): the server publishes ribbons
+for the recording player through ``Avatar.privateVehicleState.ribbons``
+nested-property updates. Other players' ribbons are only available
+post-match via the BattleResults tail — see :mod:`battle_results`.
 
-Wire IDs (0-56) are from the SubRibbon auto-ID space in m53aea2ee.pyc,
-verified by runtime inspection on the game server.
+Two views over the same source data:
+
+* :func:`extract_recording_player_ribbons` — one RibbonEvent per
+  server-side update, matching the client's ``Avatar.gRibbon.fire()``
+  callback. Each event's ``count`` is the delta for that update. Best
+  for temporal analysis; sum of counts matches the client's final HUD
+  count in most cases.
+
+* :func:`coalesce_ribbon_popups` — same events merged by ribbon_id
+  within ``LIFE_TIME`` (6.0s). Each returned event represents one
+  on-screen popup with its final ``x N`` badge. Best for "what the
+  player actually saw".
+
+Wire IDs (0-59) match the declaration order of the ``Ribbon`` class in
+``scripts/me087a78d.pyc`` (build 12267945). Each Ribbon is constructed
+with id = ``len(Ribbon._Ribbon__all)`` at module init, so wire id ==
+position in that list.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from wows_replay_parser.events.models import (
-    DamageEvent,
-    DeathEvent,
-    GameEvent,
-    RibbonEvent,
-    ShotDestroyedEvent,
-)
+from wows_replay_parser.events.models import RibbonEvent
 
 # fmt: off
-# Complete wire ribbon IDs (0-56). Verified against 5 replays.
 RIBBON_WIRE_IDS: dict[int, str] = {
     0:  "MAIN_CALIBER",
     1:  "TORPEDO",
@@ -62,9 +71,9 @@ RIBBON_WIRE_IDS: dict[int, str] = {
     36: "WAVE_KILL_TORPEDO",
     37: "WAVE_CUT_WAVE",
     38: "WAVE_HIT_VEHICLE",
-    39: "ACOUSTIC_HIT_NEW",
-    40: "ACOUSTIC_HIT_CURR",
-    41: "ACOUSTIC_HIT_BLOCK",
+    39: "ACOUSTIC_HIT_VEHICLE_NEW",
+    40: "ACOUSTIC_HIT_VEHICLE_CURR",
+    41: "ACOUSTIC_HIT_VEHICLE_BLOCK",
     42: "ACID",
     43: "DBOMB_FULL_DAMAGE",
     44: "DBOMB_PARTIAL_DAMAGE",
@@ -78,149 +87,43 @@ RIBBON_WIRE_IDS: dict[int, str] = {
     52: "SHIELD_HIT",
     53: "SHIELD_REMOVED",
     54: "ASSIST",
-    55: "MISSILE_HIT",
+    55: "MISSILE",
     56: "SHOT_DOWN_MISSILE",
+    57: "WAVE",
+    58: "TORPEDO_PHOTON",
+    59: "SHIELD",
 }
 # fmt: on
 
-# Convenience constants for common ribbon IDs
-RIBBON_MAIN_CALIBER = 0
-RIBBON_TORPEDO = 1
-RIBBON_BOMB = 2
-RIBBON_PLANE = 3
-RIBBON_CRIT = 4
-RIBBON_FRAG = 5
-RIBBON_BURN = 6
-RIBBON_FLOOD = 7
-RIBBON_CITADEL = 8
-RIBBON_BASE_DEFENSE = 9
-RIBBON_BASE_CAPTURE = 10
-RIBBON_BASE_CAPTURE_ASSIST = 11
-RIBBON_SUPPRESSED = 12
-RIBBON_SECONDARY_CALIBER = 13
-RIBBON_OVER_PENETRATION = 14
-RIBBON_PENETRATION = 15
-RIBBON_NO_PENETRATION = 16
-RIBBON_RICOCHET = 17
-RIBBON_BUILDING_KILL = 18
-RIBBON_DETECTED = 19
-RIBBON_ASSIST = 54
-
-# NB: `RIBBON_WIRE_IDS` is already id→name. A previous version inverted it
-# into {name: id}, which silently broke `derive_ribbons()` (every lookup
-# fell through to the default). Keep this a straight alias so `.get(int_id)`
-# returns the ribbon name string.
-RIBBON_NAMES: dict[int, str] = dict(RIBBON_WIRE_IDS)
-# Also keep the old friendly names for display
-RIBBON_DISPLAY_NAMES: dict[int, str] = {
-    0: "Main Battery Hit", 1: "Torpedo Hit", 2: "Bomb Hit",
-    3: "Plane Shot Down", 4: "Critical Hit", 5: "Destroyed",
-    6: "Set on Fire", 7: "Caused Flooding", 8: "Citadel Hit",
-    9: "Base Defense", 10: "Base Capture", 11: "Capture Assist",
-    12: "Suppressed", 13: "Secondary Hit",
-    14: "Over-penetration", 15: "Penetration",
-    16: "Non-penetration", 17: "Ricochet",
-    18: "Building Destroyed", 19: "Detected", 54: "Assist",
-}
-
-# HIT_TYPE values → ribbon mapping (simplified)
-# These are approximate — exact mapping depends on game logic
-_HIT_TYPE_TO_RIBBON: dict[int, int] = {
-    1: RIBBON_PENETRATION,      # regular penetration
-    2: RIBBON_NO_PENETRATION,   # shatter/bounce
-    3: RIBBON_OVER_PENETRATION, # over-penetration
-    4: RIBBON_CITADEL,          # citadel hit
-}
-
-# Damage type string → ribbon mapping
-_DAMAGE_TYPE_TO_RIBBON: dict[str, int] = {
-    "fire": RIBBON_BURN,
-    "flooding": RIBBON_FLOOD,
-    "torpedo": RIBBON_TORPEDO,
-}
-
-
-def derive_ribbons(events: list[GameEvent]) -> list[RibbonEvent]:
-    """Derive ribbon events from existing game events.
-
-    This is a simplified approximation of the client-side ribbon
-    derivation logic. It covers the obvious cases:
-    - Shell hits (penetration, citadel, over-pen, shatter)
-    - Torpedo hits
-    - Fire/flooding from damage events
-    - Kill ribbons from death events
-
-    Args:
-        events: List of game events from EventStream.
-
-    Returns:
-        List of derived RibbonEvent objects, sorted by timestamp.
-    """
-    ribbons: list[RibbonEvent] = []
-
-    for event in events:
-        if isinstance(event, ShotDestroyedEvent):
-            ribbon_id = _HIT_TYPE_TO_RIBBON.get(event.hit_type)
-            if ribbon_id is not None:
-                ribbons.append(RibbonEvent(
-                    timestamp=event.timestamp,
-                    entity_id=event.owner_id,
-                    ribbon_id=ribbon_id,
-                    ribbon_name=RIBBON_NAMES.get(
-                        ribbon_id, "Unknown",
-                    ),
-                    vehicle_id=event.owner_id,
-                    target_id=0,  # target not in ShotDestroyedEvent
-                ))
-
-        elif isinstance(event, DeathEvent):
-            if event.killer_id:
-                ribbons.append(RibbonEvent(
-                    timestamp=event.timestamp,
-                    entity_id=event.killer_id,
-                    ribbon_id=RIBBON_FRAG,
-                    ribbon_name=RIBBON_NAMES[RIBBON_FRAG],
-                    vehicle_id=event.killer_id,
-                    target_id=event.victim_id,
-                ))
-
-        elif isinstance(event, DamageEvent):
-            ribbon_id = _DAMAGE_TYPE_TO_RIBBON.get(
-                event.damage_type,
-            )
-            if ribbon_id is not None:
-                ribbons.append(RibbonEvent(
-                    timestamp=event.timestamp,
-                    entity_id=event.entity_id,
-                    ribbon_id=ribbon_id,
-                    ribbon_name=RIBBON_NAMES.get(
-                        ribbon_id, "Unknown",
-                    ),
-                    vehicle_id=event.entity_id,
-                    target_id=event.target_id,
-                ))
-
-    return ribbons
-
 
 def extract_recording_player_ribbons(
-    history: list,
+    history: list[Any],
     avatar_entity_id: int,
 ) -> list[RibbonEvent]:
     """Extract server-authoritative ribbons for the recording player.
 
-    Diffs consecutive privateVehicleState.ribbons cumulative snapshots
-    to produce individual RibbonEvents with exact timestamps.
+    One RibbonEvent per server-side update to
+    ``Avatar.privateVehicleState.ribbons`` — matches the client's
+    ``Avatar.gRibbon.fire(ribbonId, count)`` callback (which produces
+    exactly one UI popup per fire) as reverse-engineered from
+    ``RibbonsComponentCommon.onStateChanged`` in
+    ``scripts/ma1dbb474/RibbonsComponent.pyc``.
+
+    The wire counters in ``ribbons[].count`` are a running tally against
+    currently-alive targets, not lifetime cumulative — they can decrease
+    when targets die. Negative deltas are ignored (no event fires when a
+    counter drops due to a target dying). When the counter later grows
+    again, each positive delta produces a new RibbonEvent, matching what
+    the player sees in-game.
 
     Only works for the recording player (OWN_CLIENT property).
-    For other players, use derive_ribbons() instead.
 
     Args:
         history: The tracker's _history list (list of PropertyChange).
         avatar_entity_id: The recording player's Avatar entity ID.
 
     Returns:
-        Chronological list of RibbonEvents (derived=False).
+        Chronological list of RibbonEvents.
     """
     events: list[RibbonEvent] = []
     prev_counts: dict[int, int] = {}
@@ -266,23 +169,90 @@ def extract_recording_player_ribbons(
             if rid is not None and cnt is not None:
                 curr_counts[int(rid)] = int(cnt)
 
-        # Diff against previous snapshot to find new ribbons
+        # Emit exactly one RibbonEvent per positive-delta — mirroring the
+        # client's ``gRibbon.fire(ribbonId, count)`` called once per wire
+        # update. The ``count`` field carries the delta (popup x N badge).
         for rid, cnt in curr_counts.items():
             prev = prev_counts.get(rid, 0)
             delta = cnt - prev
             if delta > 0:
                 name = RIBBON_WIRE_IDS.get(rid, f"UNKNOWN_{rid}")
-                for _ in range(delta):
-                    events.append(RibbonEvent(
-                        timestamp=change.timestamp,
-                        entity_id=avatar_entity_id,
-                        ribbon_id=rid,
-                        ribbon_name=name,
-                        vehicle_id=avatar_entity_id,
-                        target_id=0,
-                        derived=False,
-                    ))
+                events.append(RibbonEvent(
+                    timestamp=change.timestamp,
+                    entity_id=avatar_entity_id,
+                    ribbon_id=rid,
+                    ribbon_name=name,
+                    count=delta,
+                    vehicle_id=avatar_entity_id,
+                    target_id=0,
+                ))
 
         prev_counts = curr_counts
 
     return events
+
+
+# Lifetimes from scripts/m102f8b9c/RibbonSystem.pyc constants.
+RIBBON_LIFE_TIME_SEC: float = 6.0
+"""Time a TempRibbon popup stays on screen before fade-out begins."""
+
+RIBBON_DEATH_TIME_SEC: float = 0.5
+"""Fade-out duration after LIFE_TIME elapses, before the popup is removed."""
+
+
+def coalesce_ribbon_popups(
+    events: list[RibbonEvent],
+    window_sec: float = RIBBON_LIFE_TIME_SEC,
+) -> list[RibbonEvent]:
+    """Coalesce same-type RibbonEvents within the popup-lifetime window.
+
+    Mirrors the client's ``RibbonSystem.__updateTempEntity`` behavior:
+    any ``addRibbon`` call for a given ribbon_id within ``LIFE_TIME`` of
+    the previous one for the same id **extends the existing popup**
+    (refreshes ``lastUpdate`` and bumps ``tempCount``) rather than
+    creating a new popup. Only after a gap greater than ``LIFE_TIME``
+    does a new on-screen popup appear.
+
+    Each returned event represents **one on-screen popup**:
+      * ``timestamp``: when the popup first appeared (first fire in the window).
+      * ``count``: total accumulated count over the popup's lifetime (the
+        final ``x N`` badge the player saw before it faded).
+
+    Args:
+        events: chronological raw ribbon events from
+            ``extract_recording_player_ribbons``.
+        window_sec: merge window. Defaults to the client's LIFE_TIME=6.0s.
+
+    Returns:
+        Coalesced list with one RibbonEvent per on-screen popup.
+    """
+    if not events:
+        return []
+
+    # active[ribbon_id] -> (index_in_out_list, expiry_timestamp)
+    active: dict[int, tuple[int, float]] = {}
+    out: list[RibbonEvent] = []
+
+    for ev in events:
+        key = ev.ribbon_id
+        existing = active.get(key)
+        if existing is not None and ev.timestamp <= existing[1]:
+            # Within the popup's remaining life: merge.
+            idx = existing[0]
+            out[idx].count += ev.count
+            # The client refreshes lastUpdate on each fire, so expiry extends.
+            active[key] = (idx, ev.timestamp + window_sec)
+        else:
+            # New popup (either first fire of this type or previous one expired).
+            out.append(RibbonEvent(
+                timestamp=ev.timestamp,
+                entity_id=ev.entity_id,
+                ribbon_id=ev.ribbon_id,
+                ribbon_name=ev.ribbon_name,
+                count=ev.count,
+                vehicle_id=ev.vehicle_id,
+                target_id=ev.target_id,
+            ))
+            active[key] = (len(out) - 1, ev.timestamp + window_sec)
+
+    return out

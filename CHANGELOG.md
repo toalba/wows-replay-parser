@@ -11,6 +11,20 @@ All notable changes to `wows-replay-parser` are documented here.
   - Dirty-repo detection: refuses checkout if tracked files have uncommitted changes
   - Increased git timeouts for cross-filesystem setups (WSL over `/mnt/c/`)
 - **Airstrike params_id preservation** — `activateAirSupport` no longer overwrites the real `params_id`/`team_id` from `receive_addMinimapSquadron`
+- **BattleResults decoder** (`battle_results.py`) — decodes the post-match 0x22 packet into a typed `BattleResults` with per-player stats, battle metadata, and own-player private economics
+  - 466-field `CLIENT_PUBLIC_RESULTS` schema (PLAYER_INFO 20 + VEH_BASE_RESULTS 446) extracted via Stage-1..4 decompilation of obfuscated `scripts/m0b4b170b.pyc` (aka `BattleResultsShared`) on build 12267945
+  - `PlayerBattleResult.stat(name)` named-field lookup + `.raw` / `.extra` for unmapped tail slots
+  - `PlayerBattleResult.ribbon_count(ribbon_id)` / `.ribbon_counts()` read the authoritative end-of-match ribbon tallies from `raw[481 + ribbon_id]` — the server's `incomeRibbon.count` post-popup-expiry
+- **Ribbon popup coalescing** — `replay.recording_player_ribbon_popups()` merges same-type ribbon events within the client's `LIFE_TIME=6.0s` window to match on-screen popups, reverse-engineered from `RibbonSystem.__updateTempEntity` in `scripts/m102f8b9c/RibbonSystem.pyc`
+- **`RibbonEvent.count`** field — delta for the wire update (popup `x N` badge)
+- **Three new ribbon IDs** — 57 `WAVE`, 58 `TORPEDO_PHOTON`, 59 `SHIELD`
+
+### Changed
+- **Ribbon extraction semantics** — `recording_player_ribbons()` now emits **one RibbonEvent per server wire update** (matching `Avatar.gRibbon.fire()` invocations) instead of `delta` events per snapshot, fixing over-count on replays with counter resets
+- **Ribbon wire-id names** corrected: 39-41 renamed `ACOUSTIC_HIT_*` → `ACOUSTIC_HIT_VEHICLE_*`; 55 renamed `MISSILE_HIT` → `MISSILE`
+
+### Removed
+- **`derive_ribbons()`** — the hit-event-inferred ribbon path is removed; ribbons are now exclusively server-authoritative from `privateVehicleState.ribbons`. Also removed the vestigial `RibbonEvent.derived` flag, `RIBBON_DISPLAY_NAMES` dict, and per-id convenience constants (`RIBBON_MAIN_CALIBER`, etc.) that only existed to serve the deleted function.
 
 ## [0.1.0] — 2026-04-02
 

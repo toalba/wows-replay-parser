@@ -1,122 +1,16 @@
-"""Unit tests for ribbon extraction / derivation.
-
-Regression coverage for the `RIBBON_NAMES` inversion bug where the
-reverse-mapped dict was {name: id} and every name lookup in
-`derive_ribbons()` silently fell through to the "Unknown" default.
-"""
+"""Unit tests for recording-player ribbon extraction."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
-from wows_replay_parser.events.models import (
-    DamageEvent,
-    DeathEvent,
-    ShotDestroyedEvent,
-)
+from wows_replay_parser.events.models import RibbonEvent
 from wows_replay_parser.ribbons import (
-    RIBBON_NAMES,
-    RIBBON_WIRE_IDS,
-    derive_ribbons,
+    RIBBON_LIFE_TIME_SEC,
+    coalesce_ribbon_popups,
     extract_recording_player_ribbons,
 )
-
-
-class TestRibbonNamesMap:
-    def test_ribbon_names_is_id_to_name(self) -> None:
-        # RIBBON_NAMES must be {int_id: str_name}, NOT the inverted form.
-        assert RIBBON_NAMES[0] == "MAIN_CALIBER"
-        assert RIBBON_NAMES[5] == "FRAG"
-        assert RIBBON_NAMES[8] == "CITADEL"
-        assert RIBBON_NAMES[54] == "ASSIST"
-
-    def test_ribbon_names_matches_wire_ids(self) -> None:
-        assert RIBBON_NAMES == RIBBON_WIRE_IDS
-
-    def test_int_get_returns_string(self) -> None:
-        # The derive_ribbons callsite pattern.
-        val = RIBBON_NAMES.get(5, "Unknown")
-        assert val == "FRAG"
-        assert isinstance(val, str)
-
-
-class TestDeriveRibbons:
-    def test_penetration_from_shot_destroyed(self) -> None:
-        events = [
-            ShotDestroyedEvent(
-                timestamp=1.0, entity_id=100,
-                owner_id=100, hit_type=1, shot_id=42,
-            ),
-        ]
-        ribbons = derive_ribbons(events)
-        assert len(ribbons) == 1
-        assert ribbons[0].ribbon_id == 15  # PENETRATION
-        assert ribbons[0].ribbon_name == "MAIN_CALIBER_PENETRATION"
-
-    def test_citadel_from_shot_destroyed(self) -> None:
-        events = [
-            ShotDestroyedEvent(
-                timestamp=2.0, entity_id=100,
-                owner_id=100, hit_type=4,
-            ),
-        ]
-        ribbons = derive_ribbons(events)
-        assert len(ribbons) == 1
-        assert ribbons[0].ribbon_id == 8
-        assert ribbons[0].ribbon_name == "CITADEL"
-
-    def test_kill_produces_frag(self) -> None:
-        events = [
-            DeathEvent(
-                timestamp=5.0, entity_id=0,
-                victim_id=200, killer_id=100,
-            ),
-        ]
-        ribbons = derive_ribbons(events)
-        assert len(ribbons) == 1
-        assert ribbons[0].ribbon_id == 5  # FRAG
-        assert ribbons[0].ribbon_name == "FRAG"
-        assert ribbons[0].vehicle_id == 100
-        assert ribbons[0].target_id == 200
-
-    def test_kill_without_killer_skipped(self) -> None:
-        events = [
-            DeathEvent(timestamp=5.0, victim_id=200, killer_id=0),
-        ]
-        assert derive_ribbons(events) == []
-
-    def test_fire_damage_produces_burn(self) -> None:
-        events = [
-            DamageEvent(
-                timestamp=3.0, entity_id=100,
-                target_id=200, attacker_id=300,
-                damage=150.0, damage_type="fire",
-            ),
-        ]
-        ribbons = derive_ribbons(events)
-        assert len(ribbons) == 1
-        assert ribbons[0].ribbon_id == 6  # BURN
-        assert ribbons[0].ribbon_name == "BURN"
-
-    def test_all_derived_ribbons_have_resolved_names(self) -> None:
-        # Full suite of hit_types + damage_types + a kill. No ribbon name
-        # may be the "Unknown" default (the regression symptom).
-        events: list[Any] = [
-            ShotDestroyedEvent(timestamp=1.0, owner_id=1, hit_type=1),
-            ShotDestroyedEvent(timestamp=1.1, owner_id=1, hit_type=2),
-            ShotDestroyedEvent(timestamp=1.2, owner_id=1, hit_type=3),
-            ShotDestroyedEvent(timestamp=1.3, owner_id=1, hit_type=4),
-            DamageEvent(timestamp=2.0, entity_id=1, damage_type="fire"),
-            DamageEvent(timestamp=2.1, entity_id=1, damage_type="flooding"),
-            DamageEvent(timestamp=2.2, entity_id=1, damage_type="torpedo"),
-            DeathEvent(timestamp=3.0, victim_id=9, killer_id=1),
-        ]
-        ribbons = derive_ribbons(events)
-        assert len(ribbons) == 8
-        for r in ribbons:
-            assert r.ribbon_name != "Unknown"
-            assert r.ribbon_name != ""
 
 
 @dataclass
@@ -128,7 +22,11 @@ class _FakeChange:
 
 
 class TestExtractRecordingPlayerRibbons:
-    def test_diffs_cumulative_counts(self) -> None:
+    def test_one_event_per_wire_update(self) -> None:
+        # Wire sends two updates: one per privateVehicleState snapshot.
+        # Client's ``gRibbon.fire`` is called once per update, so we emit
+        # one RibbonEvent per positive-delta snapshot. The ``count`` field
+        # carries the delta (popup's x N badge).
         history = [
             _FakeChange(
                 entity_id=1, property_name="privateVehicleState",
@@ -142,9 +40,39 @@ class TestExtractRecordingPlayerRibbons:
             ),
         ]
         events = extract_recording_player_ribbons(history, avatar_entity_id=1)
-        assert len(events) == 3  # 1 + delta(2)
-        assert all(e.ribbon_id == 5 for e in events)
-        assert all(e.ribbon_name == "FRAG" for e in events)
+        assert len(events) == 2  # one event per wire update
+        assert events[0].ribbon_id == 5
+        assert events[0].ribbon_name == "FRAG"
+        assert events[0].count == 1   # 0 -> 1
+        assert events[0].timestamp == 1.0
+        assert events[1].count == 2   # 1 -> 3 (delta = 2)
+        assert events[1].timestamp == 2.0
+
+    def test_ignores_count_resets(self) -> None:
+        # When counter resets (target dies), no event fires. When it
+        # rebuilds, each positive delta emits a new event.
+        history = [
+            _FakeChange(
+                entity_id=1, property_name="privateVehicleState",
+                new_value={"ribbons": [{"ribbonId": 6, "count": 5}]},
+                timestamp=1.0,
+            ),
+            _FakeChange(
+                entity_id=1, property_name="privateVehicleState",
+                new_value={"ribbons": [{"ribbonId": 6, "count": 1}]},
+                timestamp=2.0,  # reset — target died
+            ),
+            _FakeChange(
+                entity_id=1, property_name="privateVehicleState",
+                new_value={"ribbons": [{"ribbonId": 6, "count": 2}]},
+                timestamp=3.0,
+            ),
+        ]
+        events = extract_recording_player_ribbons(history, avatar_entity_id=1)
+        # t=1.0 emits 1 event (0→5 delta=5), t=2.0 silent (reset), t=3.0 emits 1 (1→2)
+        assert len(events) == 2
+        assert events[0].count == 5
+        assert events[1].count == 1
 
     def test_ignores_other_entities(self) -> None:
         history = [
@@ -155,19 +83,65 @@ class TestExtractRecordingPlayerRibbons:
         ]
         assert extract_recording_player_ribbons(history, avatar_entity_id=1) == []
 
-    def test_agrees_with_derive_on_shared_cases(self) -> None:
-        # Both paths should produce the same ribbon_name for a FRAG.
-        derived = derive_ribbons([
-            DeathEvent(timestamp=5.0, victim_id=200, killer_id=100),
-        ])
-        extracted = extract_recording_player_ribbons([
-            _FakeChange(
-                entity_id=100, property_name="privateVehicleState",
-                new_value={"ribbons": [{"ribbonId": 5, "count": 1}]},
-                timestamp=5.0,
-            ),
-        ], avatar_entity_id=100)
-        assert len(derived) == 1
-        assert len(extracted) == 1
-        assert derived[0].ribbon_name == extracted[0].ribbon_name == "FRAG"
-        assert derived[0].ribbon_id == extracted[0].ribbon_id == 5
+
+def _ev(ts: float, rid: int, name: str = "BURN", count: int = 1) -> RibbonEvent:
+    return RibbonEvent(
+        timestamp=ts, entity_id=1, ribbon_id=rid,
+        ribbon_name=name, count=count, vehicle_id=1, target_id=0,
+    )
+
+
+class TestCoalesceRibbonPopups:
+    def test_empty(self) -> None:
+        assert coalesce_ribbon_popups([]) == []
+
+    def test_single(self) -> None:
+        events = [_ev(1.0, 6)]
+        out = coalesce_ribbon_popups(events)
+        assert len(out) == 1
+        assert out[0].timestamp == 1.0
+        assert out[0].count == 1
+
+    def test_rapid_same_id_merges(self) -> None:
+        # Three BURN events within the 6s window — merge into ONE popup,
+        # count accumulates.
+        events = [_ev(1.0, 6), _ev(3.0, 6), _ev(5.0, 6)]
+        out = coalesce_ribbon_popups(events)
+        assert len(out) == 1
+        assert out[0].timestamp == 1.0   # first fire timestamp
+        assert out[0].count == 3         # accumulated
+
+    def test_gap_creates_new_popup(self) -> None:
+        # First popup fires at t=1, second fires at t=10 — that's 9s later,
+        # past the 6s window. Should produce TWO popups.
+        events = [_ev(1.0, 6), _ev(10.0, 6)]
+        out = coalesce_ribbon_popups(events)
+        assert len(out) == 2
+        assert out[0].count == 1
+        assert out[1].count == 1
+
+    def test_refreshing_extends_popup(self) -> None:
+        # Client's __updateTempEntity resets lastUpdate on each fire.
+        # Fires at 0, 5, 10, 15 — each within 6s of the previous.
+        # Should merge into one popup (popup keeps getting refreshed).
+        events = [_ev(0.0, 6), _ev(5.0, 6), _ev(10.0, 6), _ev(15.0, 6)]
+        out = coalesce_ribbon_popups(events)
+        assert len(out) == 1
+        assert out[0].count == 4
+
+    def test_different_ids_dont_merge(self) -> None:
+        # BURN and CITADEL at the same tick are two separate popups.
+        events = [_ev(1.0, 6, "BURN"), _ev(1.0, 8, "CITADEL")]
+        out = coalesce_ribbon_popups(events)
+        assert len(out) == 2
+        assert {e.ribbon_id for e in out} == {6, 8}
+
+    def test_custom_window(self) -> None:
+        # Override the window to a shorter value.
+        events = [_ev(0.0, 6), _ev(2.0, 6)]
+        out = coalesce_ribbon_popups(events, window_sec=1.0)
+        assert len(out) == 2  # 2s gap > 1s window
+
+    def test_life_time_constant(self) -> None:
+        # Sanity check: client constant is 6.0s per decoded bytecode.
+        assert RIBBON_LIFE_TIME_SEC == 6.0
