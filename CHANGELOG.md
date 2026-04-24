@@ -4,6 +4,19 @@ All notable changes to `wows-replay-parser` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **M-3: Ribbon init-burst anomaly** — `extract_recording_player_ribbons()` now
+  tracks per-array-slot state (`ribbons[i]` indexed) instead of folding by
+  ribbonId. Each slot's ribbonId is locked at first sighting; subsequent
+  leaf-set `ribbons[i].ribbonId` ops on the same slot are ignored. Root cause:
+  in a subset of replays the server rewrites slot 0's ribbonId through a
+  cycle of values at match start (observed `15 → 2 → … → 10` in two of eight
+  Chapaev CB replays), producing phantom `BOMB/PLANE/CRIT/...` events and
+  misattributing the real MAIN_CALIBER_PENETRATION count to BASE_CAPTURE.
+  Cross-checked against all 8 Chapaev CBs: wire sums now match
+  `battle_results().own_result.ribbon_counts()` exactly. Regression test:
+  `tests/test_ribbons.py::test_ignores_ribbon_id_leaf_set_burst`.
+
 ### Added
 - **Gamedata auto-sync** — `sync_gamedata()` checks out the correct git tag matching the replay's game version
   - Falls back to closest version tag when exact tag is missing (smallest absolute build-ID delta)

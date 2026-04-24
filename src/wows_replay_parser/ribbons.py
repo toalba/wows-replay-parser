@@ -109,12 +109,21 @@ def extract_recording_player_ribbons(
     ``RibbonsComponentCommon.onStateChanged`` in
     ``scripts/ma1dbb474/RibbonsComponent.pyc``.
 
-    The wire counters in ``ribbons[].count`` are a running tally against
+    Tracking is per-array-slot (``ribbons[i]``), not per-ribbonId. Each
+    slot's ribbonId is locked in at first sighting — subsequent leaf-set
+    ``ribbons[i].ribbonId`` updates on the same slot are ignored. This
+    matches how the authoritative BattleResults tail
+    (``raw[481 + ribbon_id]``) attributes counts and sidesteps an
+    occasional server init-burst anomaly where slot 0's ribbonId is
+    rewritten through a sequence of values (M-3: without per-slot
+    locking, each flip produces a ghost +1 event for the new id, and
+    later count increments accumulate under the wrong ribbon name).
+
+    The wire counters in ``ribbons[i].count`` are a running tally against
     currently-alive targets, not lifetime cumulative — they can decrease
-    when targets die. Negative deltas are ignored (no event fires when a
-    counter drops due to a target dying). When the counter later grows
-    again, each positive delta produces a new RibbonEvent, matching what
-    the player sees in-game.
+    when targets die. Negative deltas are silent (no event fires) but the
+    slot's tracked count is realigned with the new wire value, so when
+    the counter climbs again each positive delta produces one event.
 
     Only works for the recording player (OWN_CLIENT property).
 
@@ -126,7 +135,8 @@ def extract_recording_player_ribbons(
         Chronological list of RibbonEvents.
     """
     events: list[RibbonEvent] = []
-    prev_counts: dict[int, int] = {}
+    slot_ribbon_id: dict[int, int] = {}
+    slot_prev_count: dict[int, int] = {}
 
     for change in history:
         if (
@@ -143,7 +153,6 @@ def extract_recording_player_ribbons(
         if ribbons_raw is None:
             continue
 
-        # Handle both list and dict formats
         entries: list[Any]
         if isinstance(ribbons_raw, dict):
             entries = list(ribbons_raw.values())
@@ -152,8 +161,7 @@ def extract_recording_player_ribbons(
         else:
             continue
 
-        curr_counts: dict[int, int] = {}
-        for entry in entries:
+        for slot_idx, entry in enumerate(entries):
             if entry is None:
                 continue
             rid = (
@@ -166,28 +174,27 @@ def extract_recording_player_ribbons(
                 if isinstance(entry, dict)
                 else getattr(entry, "count", None)
             )
-            if rid is not None and cnt is not None:
-                curr_counts[int(rid)] = int(cnt)
+            if rid is None or cnt is None:
+                continue
+            rid = int(rid)
+            cnt = int(cnt)
 
-        # Emit exactly one RibbonEvent per positive-delta — mirroring the
-        # client's ``gRibbon.fire(ribbonId, count)`` called once per wire
-        # update. The ``count`` field carries the delta (popup x N badge).
-        for rid, cnt in curr_counts.items():
-            prev = prev_counts.get(rid, 0)
-            delta = cnt - prev
+            authored_rid = slot_ribbon_id.setdefault(slot_idx, rid)
+            prev_cnt = slot_prev_count.get(slot_idx, 0)
+            delta = cnt - prev_cnt
+
             if delta > 0:
-                name = RIBBON_WIRE_IDS.get(rid, f"UNKNOWN_{rid}")
+                name = RIBBON_WIRE_IDS.get(authored_rid, f"UNKNOWN_{authored_rid}")
                 events.append(RibbonEvent(
                     timestamp=change.timestamp,
                     entity_id=avatar_entity_id,
-                    ribbon_id=rid,
+                    ribbon_id=authored_rid,
                     ribbon_name=name,
                     count=delta,
                     vehicle_id=avatar_entity_id,
                     target_id=0,
                 ))
-
-        prev_counts = curr_counts
+            slot_prev_count[slot_idx] = cnt
 
     return events
 

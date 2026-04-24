@@ -463,12 +463,19 @@ public API). See `events/models.py` and `state/models.py` for the exposed fields
 - Ribbons (recording player only):
   - `recording_player_ribbons()` — one RibbonEvent per wire update to
     `privateVehicleState.ribbons`; matches the client's `gRibbon.fire()`.
+    Tracks state **per array slot** (`ribbons[i]` index), not per ribbonId:
+    each slot's ribbonId is locked at first sighting so the server's
+    init-burst `ribbons[0].ribbonId = X` rewrites (observed in a subset of
+    replays) don't produce ghost events or misattribute counts. See
+    `KNOWN_ISSUES.md` M-3 (resolved) for the bit-level analysis.
   - `recording_player_ribbon_popups()` — coalesces same-type events
     within `LIFE_TIME=6.0s` to match on-screen popups.
   - `battle_results().own_result.ribbon_counts()` — authoritative
     end-of-match per-ribbon tallies from BattleResults tail
-    `[481 + ribbon_id]`. Prefer this over wire sums for high-frequency
-    ribbons (wire can under-count when server batches updates).
+    `[481 + ribbon_id]`. Base index is extracted from build 12267945
+    (patch 15.3); earlier 15.x patches may have a different offset —
+    if `ribbon_counts()` returns all zeros on a pre-15.3 replay while
+    the wire stream has real ribbons, the BR schema moved.
 - Minimap vision (Avatar `updateMinimapVisionInfo`, both args)
 - Artillery shells (Avatar `receiveArtilleryShots` / `receiveShotKills` / `receiveShellInfo`)
 - Torpedoes (Avatar `receiveTorpedoes` / `receiveTorpedoArmed` / `receiveTorpedoSync` / direction)

@@ -83,6 +83,49 @@ class TestExtractRecordingPlayerRibbons:
         ]
         assert extract_recording_player_ribbons(history, avatar_entity_id=1) == []
 
+    def test_ignores_ribbon_id_leaf_set_burst(self) -> None:
+        # M-3: in some replays the server rewrites slot 0's ribbonId
+        # through a burst of values at match start. The slot's true
+        # ribbonId is the one it was *created* with — subsequent
+        # ribbonId changes on the same slot must not produce ghost
+        # events, and later count increments must attribute to the
+        # original ribbonId (not the last one rewritten in).
+        history = [
+            # SLICE insert: slot 0 created with ribbonId=15 (PEN), count=1
+            _FakeChange(
+                entity_id=1, property_name="privateVehicleState",
+                new_value={"ribbons": [{"ribbonId": 15, "count": 1}]},
+                timestamp=1.0,
+            ),
+            # Server init burst: slot 0's ribbonId flipped with count held
+            _FakeChange(
+                entity_id=1, property_name="privateVehicleState",
+                new_value={"ribbons": [{"ribbonId": 2, "count": 1}]},
+                timestamp=1.1,
+            ),
+            _FakeChange(
+                entity_id=1, property_name="privateVehicleState",
+                new_value={"ribbons": [{"ribbonId": 10, "count": 1}]},
+                timestamp=1.2,
+            ),
+            # Real count increments on slot 0 (still "id=10" on wire)
+            _FakeChange(
+                entity_id=1, property_name="privateVehicleState",
+                new_value={"ribbons": [{"ribbonId": 10, "count": 5}]},
+                timestamp=2.0,
+            ),
+        ]
+        events = extract_recording_player_ribbons(history, avatar_entity_id=1)
+        # Expected: 2 events, both attributed to the authored ribbonId=15,
+        # no ghost BOMB (2) or BASE_CAPTURE (10) events from the flip burst.
+        assert len(events) == 2
+        assert all(e.ribbon_id == 15 for e in events)
+        assert all(e.ribbon_name == "MAIN_CALIBER_PENETRATION" for e in events)
+        assert events[0].count == 1   # initial
+        assert events[1].count == 4   # 1 -> 5 on slot 0
+        total = sum(e.count for e in events)
+        assert total == 5  # matches the final slot-0 count
+
 
 def _ev(ts: float, rid: int, name: str = "BURN", count: int = 1) -> RibbonEvent:
     return RibbonEvent(

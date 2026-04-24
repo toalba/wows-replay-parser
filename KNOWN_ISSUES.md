@@ -57,32 +57,30 @@ a float (seconds). Needs verification against Vehicle.def.
 
 ---
 
-### M-3: Wire ribbon_id remapping in some game modes
+### ~~M-3: Wire ribbon_id remapping in some game modes~~ FIXED
 
-In a subset of replays (observed in one CB replay on AngelWings) the
-wire emits `ribbon_id=10` at positions where BattleResults'
-`tail[481 + ribbon_id]` lists the count under `MAIN_CALIBER_PENETRATION`
-(slot `481+15`). Our `recording_player_ribbons()` therefore labels 108
-events as `BASE_CAPTURE` while
-`battle_results().own_result.ribbon_counts()` reports
-BASE_CAPTURE=0 / MAIN_CALIBER_PENETRATION=108.
+**Root cause (confirmed by bit-level decoder instrumentation on replays
+`20260419_202301_PRSC108-Pr-68-Chapaev_56_AngelWings` and
+`20260419_192410_PRSC108-Pr-68-Chapaev_28_naval_mission`):** in some
+replays the server emits a burst of leaf-set
+`ribbons[0].ribbonId = X` NPU ops at match start — cycling slot 0's
+ribbonId through a sequence of values (observed `15 → 2 → 3 → … → 10`).
+The SLOT's authoritative ribbonId is the one it was *created* with via
+the SLICE insert; the init-burst rewrites do not correspond to real
+ribbon events, and later `ribbons[0].count` increments are attributed
+to the last-rewritten id instead of the slot's original id.
 
-Root cause unconfirmed. Possibilities:
-- Per-match Ribbon enum remapping driven by `battle_type` / `game_mode`.
-- Schema drift in `RIBBON_STATE` for specific game modes (e.g. an extra
-  field shifts our INT8 read).
+`extract_recording_player_ribbons` now tracks state **per array slot
+index**, not per ribbonId. Each slot's ribbonId is locked at first
+sighting; subsequent `ribbonId` leaf-set ops on the same slot are
+ignored and count deltas always attribute to the slot's authored id.
+Confirmed against all 8 Chapaev CB replays and BattleResults: wire
+sums now match `tail[481 + ribbon_id]` exactly for every ribbon in
+every replay. Regression test:
+`test_ignores_ribbon_id_leaf_set_burst`.
 
-**Current recommendation:** trust
-`replay.battle_results().own_result.ribbon_counts()` for lifetime totals
-(reads `tail[481 + ribbon_id]`); treat
-`recording_player_ribbons()` labels as best-effort and cross-check
-against BR when counts look unusual.
-
-**Files:** `ribbons.py` — `RIBBON_WIRE_IDS`, `extract_recording_player_ribbons`.
-
-**Fix:** Dump raw bytes of the affected `privateVehicleState.ribbons`
-nested updates and manually decode to determine whether it's a schema
-or a remapping issue.
+**Files:** `ribbons.py` — `extract_recording_player_ribbons`
+(per-slot state); `tests/test_ribbons.py` — regression coverage.
 
 ---
 
