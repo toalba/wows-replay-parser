@@ -303,13 +303,21 @@ class AirSupportEvent(GameEvent):
 
 @dataclass
 class RibbonEvent(GameEvent):
-    """Derived ribbon (P2). Inferred from hit events."""
+    """Server-authoritative ribbon for the recording player.
+
+    Emitted once per server-side update to
+    ``Avatar.privateVehicleState.ribbons`` — matches the client's
+    ``Avatar.gRibbon.fire(ribbonId, count)`` callback and the UI popup
+    that follows. ``count`` is the ``x N`` badge shown on the popup
+    (typically 1, but can be higher if the server batched multiple
+    same-type ribbons in a single update). Recording player only.
+    """
 
     ribbon_id: int = 0
     ribbon_name: str = ""
+    count: int = 1
     vehicle_id: int = 0
     target_id: int = 0
-    derived: bool = True
 
 
 @dataclass

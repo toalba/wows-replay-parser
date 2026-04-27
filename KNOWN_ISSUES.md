@@ -57,6 +57,33 @@ a float (seconds). Needs verification against Vehicle.def.
 
 ---
 
+### ~~M-3: Wire ribbon_id remapping in some game modes~~ FIXED
+
+**Root cause (confirmed by bit-level decoder instrumentation on replays
+`20260419_202301_PRSC108-Pr-68-Chapaev_56_AngelWings` and
+`20260419_192410_PRSC108-Pr-68-Chapaev_28_naval_mission`):** in some
+replays the server emits a burst of leaf-set
+`ribbons[0].ribbonId = X` NPU ops at match start — cycling slot 0's
+ribbonId through a sequence of values (observed `15 → 2 → 3 → … → 10`).
+The SLOT's authoritative ribbonId is the one it was *created* with via
+the SLICE insert; the init-burst rewrites do not correspond to real
+ribbon events, and later `ribbons[0].count` increments are attributed
+to the last-rewritten id instead of the slot's original id.
+
+`extract_recording_player_ribbons` now tracks state **per array slot
+index**, not per ribbonId. Each slot's ribbonId is locked at first
+sighting; subsequent `ribbonId` leaf-set ops on the same slot are
+ignored and count deltas always attribute to the slot's authored id.
+Confirmed against all 8 Chapaev CB replays and BattleResults: wire
+sums now match `tail[481 + ribbon_id]` exactly for every ribbon in
+every replay. Regression test:
+`test_ignores_ribbon_id_leaf_set_burst`.
+
+**Files:** `ribbons.py` — `extract_recording_player_ribbons`
+(per-slot state); `tests/test_ribbons.py` — regression coverage.
+
+---
+
 ## Nested Property Decode (98.7%)
 
 48 of 3,677 nested property packets remain unresolved. All are
