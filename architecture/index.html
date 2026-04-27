@@ -1,0 +1,2959 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Python library for parsing World of Warships .wowsreplay files.">
+      
+      
+      
+        <link rel="canonical" href="https://toalba.github.io/wows-replay-parser/architecture/">
+      
+      
+        <link rel="prev" href="../concepts/dual-perspective/">
+      
+      
+        <link rel="next" href="../api/parsed-replay/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Deep Dive - wows-replay-parser</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#wows-replay-parser-architecture-internals" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="wows-replay-parser" class="md-header__button md-logo" aria-label="wows-replay-parser" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            wows-replay-parser
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Deep Dive
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="blue-grey" data-md-color-accent="blue"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="blue-grey" data-md-color-accent="light-blue"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/toalba/wows-replay-parser" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    toalba/wows-replay-parser
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="wows-replay-parser" class="md-nav__button md-logo" aria-label="wows-replay-parser" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    wows-replay-parser
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/toalba/wows-replay-parser" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    toalba/wows-replay-parser
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/parser-pipeline/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parser Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Stream
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/dual-perspective/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dual Perspective
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Dive
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Dive
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table of Contents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-overview-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Overview &amp; Data Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Overview &amp; Data Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entry-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entry Point
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-replay-file-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Replay File Format
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Replay File Format">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#encryption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Encryption
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#json-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JSON Header
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-gamedata-loading-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Gamedata Loading Pipeline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Gamedata Loading Pipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-type-aliases-aliasxml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Type Aliases (alias.xml)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-entity-definitions-def-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Entity Definitions (.def files)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.2 Entity Definitions (.def files)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interface-merging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interface Merging
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-entity-registry-sort-size-computation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Entity Registry &amp; Sort Size Computation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.3 Entity Registry &amp; Sort Size Computation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sort-size-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sort Size Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-this-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why This Matters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-method-index-resolution-the-core-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Method Index Resolution — The Core Problem
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Method Index Resolution — The Core Problem">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-the-engines-sort-algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 The Engine's Sort Algorithm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-our-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Our Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-tier-1-vs-tier-2-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Tier 1 vs Tier 2 Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-the-implementedby-bug-fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 The implementedBy Bug (Fixed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-packet-decoding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Packet Decoding
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Packet Decoding">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-packet-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Packet Header
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-packet-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 Packet Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-entity_method-packet-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 ENTITY_METHOD Packet Format
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-binary-serialization-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.4 Binary Serialization Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-entity-lifecycle-type-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Entity Lifecycle &amp; Type Resolution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Entity Lifecycle &amp; Type Resolution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-entity-creation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 Entity Creation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-entity-type-remapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Entity Type Remapping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-entity-type-map-entitiesxml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Entity Type Map (entities.xml)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64-position-tracking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 Position Tracking
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-state-tracking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. State Tracking
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. State Tracking">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-structures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Structures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Queries
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-event-stream-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Event Stream Generation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Event Stream Generation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#method-event-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method → Event Mapping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minimap-vision-unpacking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minimap Vision Unpacking
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-player-roster-enrichment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Player Roster Enrichment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Player Roster Enrichment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Sources
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arena-state-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Arena State Format
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#matching-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matching Chain
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-current-status-known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Current Status &amp; Known Limitations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="10. Current Status &amp; Known Limitations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#decode-rate-100" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decode Rate: 100%
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fully-working-77-methods-cataloged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fully Working (77 methods cataloged)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#partially-working" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Partially Working
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#not-implemented-state-model-only-packets-still-decode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not Implemented (state model only — packets still decode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#architecture-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture Constraints
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-file-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix: File Map
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/parsed-replay/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    ParsedReplay
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Events
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/merge/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Merge
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/state/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    State Models
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Development
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../development/security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../changelog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#table-of-contents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table of Contents
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-overview-data-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Overview &amp; Data Flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="1. Overview &amp; Data Flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#entry-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Entry Point
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-replay-file-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Replay File Format
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Replay File Format">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#encryption" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Encryption
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#json-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        JSON Header
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-gamedata-loading-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Gamedata Loading Pipeline
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Gamedata Loading Pipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-type-aliases-aliasxml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.1 Type Aliases (alias.xml)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-entity-definitions-def-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.2 Entity Definitions (.def files)
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.2 Entity Definitions (.def files)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#interface-merging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interface Merging
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-entity-registry-sort-size-computation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3.3 Entity Registry &amp; Sort Size Computation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3.3 Entity Registry &amp; Sort Size Computation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#sort-size-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sort Size Rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-this-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why This Matters
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-method-index-resolution-the-core-problem" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Method Index Resolution — The Core Problem
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Method Index Resolution — The Core Problem">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-the-engines-sort-algorithm" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.1 The Engine's Sort Algorithm
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-our-implementation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.2 Our Implementation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-tier-1-vs-tier-2-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.3 Tier 1 vs Tier 2 Resolution
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-the-implementedby-bug-fixed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.4 The implementedBy Bug (Fixed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#45-verification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4.5 Verification
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-packet-decoding" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Packet Decoding
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="5. Packet Decoding">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-packet-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1 Packet Header
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#52-packet-types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.2 Packet Types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#53-entity_method-packet-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.3 ENTITY_METHOD Packet Format
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#54-binary-serialization-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.4 Binary Serialization Details
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-entity-lifecycle-type-resolution" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Entity Lifecycle &amp; Type Resolution
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="6. Entity Lifecycle &amp; Type Resolution">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#61-entity-creation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.1 Entity Creation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#62-entity-type-remapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.2 Entity Type Remapping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#63-entity-type-map-entitiesxml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.3 Entity Type Map (entities.xml)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#64-position-tracking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6.4 Position Tracking
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-state-tracking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. State Tracking
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="7. State Tracking">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-structures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Structures
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Queries
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-event-stream-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Event Stream Generation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="8. Event Stream Generation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#method-event-mapping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Method → Event Mapping
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#minimap-vision-unpacking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Minimap Vision Unpacking
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-player-roster-enrichment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Player Roster Enrichment
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="9. Player Roster Enrichment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#data-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data Sources
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arena-state-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Arena State Format
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#matching-chain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Matching Chain
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-current-status-known-limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Current Status &amp; Known Limitations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="10. Current Status &amp; Known Limitations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#decode-rate-100" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decode Rate: 100%
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fully-working-77-methods-cataloged" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fully Working (77 methods cataloged)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#partially-working" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Partially Working
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#not-implemented-state-model-only-packets-still-decode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Not Implemented (state model only — packets still decode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#architecture-constraints" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture Constraints
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-file-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix: File Map
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/toalba/wows-replay-parser/edit/main/docs/architecture.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="wows-replay-parser-architecture-internals">WoWS Replay Parser — Architecture &amp; Internals<a class="headerlink" href="#wows-replay-parser-architecture-internals" title="Permanent link">&para;</a></h1>
+<p>This document explains how the parser works end-to-end: from a binary <code>.wowsreplay</code> file to fully typed game events and state snapshots. It covers the BigWorld engine conventions we reverse-engineered, the method resolution algorithm, entity lifecycle, and every layer in between.</p>
+<h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
+<ol>
+<li><a href="#1-overview--data-flow">Overview &amp; Data Flow</a></li>
+<li><a href="#2-replay-file-format">Replay File Format</a></li>
+<li><a href="#3-gamedata-loading-pipeline">Gamedata Loading Pipeline</a></li>
+<li><a href="#4-method-index-resolution--the-core-problem">Method Index Resolution — The Core Problem</a></li>
+<li><a href="#5-packet-decoding">Packet Decoding</a></li>
+<li><a href="#6-entity-lifecycle--type-resolution">Entity Lifecycle &amp; Type Resolution</a></li>
+<li><a href="#7-state-tracking">State Tracking</a></li>
+<li><a href="#8-event-stream-generation">Event Stream Generation</a></li>
+<li><a href="#9-player-roster-enrichment">Player Roster Enrichment</a></li>
+<li><a href="#10-known-limitations--open-issues">Known Limitations &amp; Open Issues</a></li>
+</ol>
+<hr />
+<h2 id="1-overview-data-flow">1. Overview &amp; Data Flow<a class="headerlink" href="#1-overview-data-flow" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>┌─────────────────────┐
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>│  .wowsreplay file   │
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>│  (binary container)  │
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>└─────────┬───────────┘
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>          │
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>          ▼
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>┌─────────────────────┐   JSON headers (match meta, player list)
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>│    ReplayReader      │──────────────────────────────────────────┐
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>│  decrypt + decompress│                                          │
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>└─────────┬───────────┘                                          │
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>          │ raw packet stream (bytes)                             │
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>          ▼                                                       │
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>┌─────────────────────┐   alias.xml    entity_defs/*.def          │
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>│  Gamedata Loading    │◄──────────────────────────────           │
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>│  AliasRegistry       │   entities.xml                           │
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>│  DefLoader           │                                          │
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>│  EntityRegistry      │                                          │
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>│  SchemaBuilder       │                                          │
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>└─────────┬───────────┘                                          │
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>          │ indexed methods, properties, binary schemas            │
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>          ▼                                                       │
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>┌─────────────────────┐                                          │
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>│  Type ID Detection   │  entities.xml → type_idx → entity_name   │
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>│  Method ID Detection │  auto-detect tie groups from payloads    │
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>└─────────┬───────────┘                                          │
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>          │                                                       │
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>          ▼                                                       │
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>┌─────────────────────┐                                          │
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>│   PacketDecoder      │  163k+ packets per replay                │
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>│   12-byte headers    │  entity lifecycle, methods, properties   │
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>│   handler dispatch   │  positions, camera, metadata             │
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>└────┬────────────┬───┘                                          │
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>     │            │                                               │
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>     ▼            ▼                                               │
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>┌──────────┐ ┌──────────┐                                        │
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>│GameState │ │EventStream│                                        │
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>│ Tracker  │ │  process  │                                        │
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>└────┬─────┘ └────┬─────┘                                        │
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>     │            │                                               │
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>     ▼            ▼                                               ▼
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a>┌──────────────────────────────────────────────────────────────────┐
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>│                        ParsedReplay                              │
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>│  .events       — typed game events (Death, Shot, Damage, ...)   │
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>│  .packets      — all decoded packets                             │
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a>│  .players      — roster with entity_id ↔ player matching         │
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>│  .state_at(t)  — full game state snapshot at any timestamp       │
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>│  .ship_state() — single ship state query                         │
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a>└──────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<p><strong>Key design principle:</strong> No hardcoded schemas. Everything is loaded dynamically from the <code>wows-gamedata</code> repository (entity definitions, type aliases, entity type mappings). When a new game patch ships, a <code>git pull</code> on wows-gamedata is all that's needed — no parser code changes.</p>
+<h3 id="entry-point">Entry Point<a class="headerlink" href="#entry-point" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">wows_replay_parser</span><span class="w"> </span><span class="kn">import</span> <span class="n">parse_replay</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">replay</span> <span class="o">=</span> <span class="n">parse_replay</span><span class="p">(</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="s2">&quot;battle.wowsreplay&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="s2">&quot;wows-gamedata/data/scripts_entity/entity_defs&quot;</span><span class="p">,</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">)</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1"># Typed events</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="k">for</span> <span class="n">event</span> <span class="ow">in</span> <span class="n">replay</span><span class="o">.</span><span class="n">events_of_type</span><span class="p">(</span><span class="n">ShotCreatedEvent</span><span class="p">):</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">event</span><span class="o">.</span><span class="n">owner_id</span><span class="p">,</span> <span class="n">event</span><span class="o">.</span><span class="n">speed</span><span class="p">,</span> <span class="n">event</span><span class="o">.</span><span class="n">target_position</span><span class="p">)</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="c1"># State snapshots</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">state</span> <span class="o">=</span> <span class="n">replay</span><span class="o">.</span><span class="n">state_at</span><span class="p">(</span><span class="mf">120.5</span><span class="p">)</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="k">for</span> <span class="n">eid</span><span class="p">,</span> <span class="n">ship</span> <span class="ow">in</span> <span class="n">state</span><span class="o">.</span><span class="n">ships</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">eid</span><span class="p">,</span> <span class="n">ship</span><span class="o">.</span><span class="n">health</span><span class="p">,</span> <span class="n">ship</span><span class="o">.</span><span class="n">is_alive</span><span class="p">)</span>
+</code></pre></div>
+<hr />
+<h2 id="2-replay-file-format">2. Replay File Format<a class="headerlink" href="#2-replay-file-format" title="Permanent link">&para;</a></h2>
+<p><strong>File:</strong> <code>src/wows_replay_parser/replay/reader.py</code></p>
+<p>A <code>.wowsreplay</code> file has this structure:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>┌──────────────────────────────────────────┐
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>│ Magic: 0x12324211 (4 bytes, LE)          │
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>│ Block count: u32 LE (1 or 2)            │
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>├──────────────────────────────────────────┤
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>│ JSON block 1: match metadata             │
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>│   size(u32) + UTF-8 JSON                 │
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>├──────────────────────────────────────────┤
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>│ JSON block 2: battle results (optional)  │
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>│   size(u32) + UTF-8 JSON                 │
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>├──────────────────────────────────────────┤
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>│ Encrypted packet stream                  │
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>│   Blowfish ECB with XOR chaining         │
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>│   then zlib decompress                   │
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>└──────────────────────────────────────────┘
+</code></pre></div>
+<h3 id="encryption">Encryption<a class="headerlink" href="#encryption" title="Permanent link">&para;</a></h3>
+<p>The packet stream is encrypted with a non-standard Blowfish variant:</p>
+<ul>
+<li><strong>Algorithm:</strong> Blowfish ECB (8-byte blocks)</li>
+<li><strong>Key:</strong> <code>0x29B7C909383F8488FA98EC4E131979FB</code> (hardcoded, same for all replays)</li>
+<li><strong>Chaining:</strong> XOR with <em>previous decrypted output</em> (not ciphertext — differs from standard CBC)</li>
+<li><strong>IV:</strong> 8 zero bytes</li>
+</ul>
+<p>After decryption, the result is zlib-decompressed into a raw packet stream.</p>
+<h3 id="json-header">JSON Header<a class="headerlink" href="#json-header" title="Permanent link">&para;</a></h3>
+<p>The first JSON block contains match metadata:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;gameVersion&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;15,2,0,12116141&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span><span class="nt">&quot;mapName&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;spaces/56_AngelWings&quot;</span><span class="p">,</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span><span class="nt">&quot;vehicles&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">&quot;shipId&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">4282300368</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Dutch_Elephant&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;id&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">502524043</span><span class="p">,</span><span class="w"> </span><span class="err">...</span><span class="p">},</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">    </span><span class="err">...</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">  </span><span class="p">]</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">}</span>
+</code></pre></div>
+<p>The <code>vehicles[].id</code> field is the AccountId, used later to match players to ship entities.</p>
+<hr />
+<h2 id="3-gamedata-loading-pipeline">3. Gamedata Loading Pipeline<a class="headerlink" href="#3-gamedata-loading-pipeline" title="Permanent link">&para;</a></h2>
+<p>The parser needs to understand entity definitions before it can decode packets. This knowledge comes from four files in the <code>wows-gamedata</code> repository.</p>
+<h3 id="31-type-aliases-aliasxml">3.1 Type Aliases (<code>alias.xml</code>)<a class="headerlink" href="#31-type-aliases-aliasxml" title="Permanent link">&para;</a></h3>
+<p><strong>File:</strong> <code>src/wows_replay_parser/gamedata/alias_registry.py</code></p>
+<p><code>alias.xml</code> defines shorthand type names used throughout <code>.def</code> files. Five patterns:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="cm">&lt;!-- Simple alias --&gt;</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nt">&lt;ENTITY_ID&gt;</span><span class="w"> </span>INT32<span class="w"> </span><span class="nt">&lt;/ENTITY_ID&gt;</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="cm">&lt;!-- FIXED_DICT — structured type with named fields --&gt;</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="nt">&lt;SHOT&gt;</span><span class="w"> </span>FIXED_DICT
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="nt">&lt;Properties&gt;</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">    </span><span class="nt">&lt;pos&gt;</span><span class="w"> </span><span class="nt">&lt;Type&gt;</span><span class="w"> </span>VECTOR3<span class="w"> </span><span class="nt">&lt;/Type&gt;</span><span class="w"> </span><span class="nt">&lt;/pos&gt;</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">    </span><span class="nt">&lt;speed&gt;</span><span class="w"> </span><span class="nt">&lt;Type&gt;</span><span class="w"> </span>FLOAT<span class="w"> </span><span class="nt">&lt;/Type&gt;</span><span class="w"> </span><span class="nt">&lt;/speed&gt;</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">    </span><span class="nt">&lt;shotID&gt;</span><span class="w"> </span><span class="nt">&lt;Type&gt;</span><span class="w"> </span>UINT16<span class="w"> </span><span class="nt">&lt;/Type&gt;</span><span class="w"> </span><span class="nt">&lt;/shotID&gt;</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">  </span><span class="nt">&lt;/Properties&gt;</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="nt">&lt;/SHOT&gt;</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="cm">&lt;!-- FIXED_DICT with AllowNone — nullable, becomes variable-length --&gt;</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a><span class="nt">&lt;OPTIONAL_DATA&gt;</span><span class="w"> </span>FIXED_DICT
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a><span class="w">  </span><span class="nt">&lt;Properties&gt;</span>...<span class="nt">&lt;/Properties&gt;</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a><span class="w">  </span><span class="nt">&lt;AllowNone&gt;</span><span class="w"> </span>true<span class="w"> </span><span class="nt">&lt;/AllowNone&gt;</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a><span class="nt">&lt;/OPTIONAL_DATA&gt;</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a><span class="cm">&lt;!-- FIXED_DICT with implementedBy — custom Python serializer --&gt;</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a><span class="nt">&lt;MISSILE&gt;</span><span class="w"> </span>FIXED_DICT
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="w">  </span><span class="nt">&lt;Properties&gt;</span>...<span class="nt">&lt;/Properties&gt;</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a><span class="w">  </span><span class="nt">&lt;implementedBy&gt;</span>MissileDef.converter<span class="nt">&lt;/implementedBy&gt;</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a><span class="nt">&lt;/MISSILE&gt;</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a>
+<a id="__codelineno-4-25" name="__codelineno-4-25" href="#__codelineno-4-25"></a><span class="cm">&lt;!-- ARRAY — variable-length list --&gt;</span>
+<a id="__codelineno-4-26" name="__codelineno-4-26" href="#__codelineno-4-26"></a><span class="nt">&lt;SHOTS_ARRAY&gt;</span><span class="w"> </span>ARRAY<span class="w"> </span><span class="nt">&lt;of&gt;</span><span class="w"> </span>SHOT<span class="w"> </span><span class="nt">&lt;/of&gt;</span><span class="w"> </span><span class="nt">&lt;/SHOTS_ARRAY&gt;</span>
+<a id="__codelineno-4-27" name="__codelineno-4-27" href="#__codelineno-4-27"></a>
+<a id="__codelineno-4-28" name="__codelineno-4-28" href="#__codelineno-4-28"></a><span class="cm">&lt;!-- TUPLE — fixed-length array --&gt;</span>
+<a id="__codelineno-4-29" name="__codelineno-4-29" href="#__codelineno-4-29"></a><span class="nt">&lt;VISION_PAIR&gt;</span><span class="w"> </span>TUPLE<span class="w"> </span><span class="nt">&lt;of&gt;</span><span class="w"> </span>INT32<span class="w"> </span><span class="nt">&lt;/of&gt;</span><span class="w"> </span><span class="nt">&lt;size&gt;</span><span class="w"> </span>2<span class="w"> </span><span class="nt">&lt;/size&gt;</span><span class="w"> </span><span class="nt">&lt;/VISION_PAIR&gt;</span>
+<a id="__codelineno-4-30" name="__codelineno-4-30" href="#__codelineno-4-30"></a>
+<a id="__codelineno-4-31" name="__codelineno-4-31" href="#__codelineno-4-31"></a><span class="cm">&lt;!-- USER_TYPE — custom type with underlying storage --&gt;</span>
+<a id="__codelineno-4-32" name="__codelineno-4-32" href="#__codelineno-4-32"></a><span class="nt">&lt;ZIPPED_BLOB&gt;</span><span class="w"> </span>USER_TYPE
+<a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">  </span><span class="nt">&lt;Type&gt;</span><span class="w"> </span>BLOB<span class="w"> </span><span class="nt">&lt;/Type&gt;</span>
+<a id="__codelineno-4-34" name="__codelineno-4-34" href="#__codelineno-4-34"></a><span class="w">  </span><span class="nt">&lt;implementedBy&gt;</span>ZippedBlobConverter.converter<span class="nt">&lt;/implementedBy&gt;</span>
+<a id="__codelineno-4-35" name="__codelineno-4-35" href="#__codelineno-4-35"></a><span class="nt">&lt;/ZIPPED_BLOB&gt;</span>
+</code></pre></div>
+<p>The <code>AliasRegistry</code> resolves these recursively. <code>ENTITY_ID</code> → <code>INT32</code>, <code>SHOT.pos</code> → <code>VECTOR3</code>, etc.</p>
+<p><strong>Critical detail:</strong> The <code>&lt;implementedBy&gt;</code> tag means the BigWorld engine uses a custom Python class to serialize/deserialize the data. The engine's <code>streamSize()</code> returns <code>-1</code> (variable) for these types, regardless of whether the fields themselves are fixed-size. Our code tracks this via <code>TypeAlias.has_implemented_by</code> and returns <code>INFINITY</code> in sort_size computation. Missing this caused a method index offset bug (see Section 4).</p>
+<h3 id="32-entity-definitions-def-files">3.2 Entity Definitions (<code>.def</code> files)<a class="headerlink" href="#32-entity-definitions-def-files" title="Permanent link">&para;</a></h3>
+<p><strong>File:</strong> <code>src/wows_replay_parser/gamedata/def_loader.py</code></p>
+<p>Each entity type has a <code>.def</code> file (Avatar.def, Vehicle.def, etc.) defining:</p>
+<ul>
+<li><strong>Properties:</strong> typed fields with visibility flags (<code>ALL_CLIENTS</code>, <code>OWN_CLIENT</code>, etc.)</li>
+<li><strong>ClientMethods:</strong> methods the server can call on the client (these appear in replays)</li>
+<li><strong>CellMethods / BaseMethods:</strong> server-side only, not in replays</li>
+</ul>
+<h4 id="interface-merging">Interface Merging<a class="headerlink" href="#interface-merging" title="Permanent link">&para;</a></h4>
+<p>Entity definitions use <code>&lt;Implements&gt;</code> to include shared interfaces:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="cm">&lt;!-- Avatar.def --&gt;</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nt">&lt;root&gt;</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">&lt;Implements&gt;</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">    </span><span class="nt">&lt;AvatarCMDs/&gt;</span><span class="w">          </span><span class="cm">&lt;!-- interface 1 --&gt;</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">    </span><span class="nt">&lt;SquadronController/&gt;</span><span class="w">  </span><span class="cm">&lt;!-- interface 2 --&gt;</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">&lt;DebugDrawable/&gt;</span><span class="w">       </span><span class="cm">&lt;!-- interface 3 --&gt;</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span>...
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">  </span><span class="nt">&lt;/Implements&gt;</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span><span class="nt">&lt;ClientMethods&gt;</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">    </span><span class="nt">&lt;onArenaStateReceived&gt;</span><span class="w">  </span><span class="cm">&lt;!-- Avatar&#39;s own methods --&gt;</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">      </span><span class="nt">&lt;Arg&gt;</span><span class="w"> </span>INT64<span class="w"> </span><span class="nt">&lt;/Arg&gt;</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">      </span><span class="nt">&lt;Arg&gt;</span><span class="w"> </span>INT8<span class="w"> </span><span class="nt">&lt;/Arg&gt;</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">      </span><span class="nt">&lt;Arg&gt;</span><span class="w"> </span>BLOB<span class="w"> </span><span class="nt">&lt;/Arg&gt;</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">      </span>...
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">    </span><span class="nt">&lt;/onArenaStateReceived&gt;</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="w">  </span><span class="nt">&lt;/ClientMethods&gt;</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="nt">&lt;/root&gt;</span>
+</code></pre></div>
+<p>The merge algorithm is <strong>depth-first, XML document order</strong>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>Avatar.def
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  ├─ AvatarCMDs (interface)
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  │   ├─ CommonCMDs (sub-interface of AvatarCMDs)
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  │   │   └─ receive_CommonCMD         → index 0
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  │   ├─ receiveSignedCommand          → index 1
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  │   └─ receivePublicIntStat          → index 2
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>  ├─ SquadronController
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>  │   ├─ receive_addSquadron           → index 3
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>  │   └─ receive_addMinimapSquadron    → index 4
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>  ├─ DebugDrawable
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>  │   └─ drawDebugLine                 → index 5
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>  ...
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>  └─ Avatar&#39;s own methods
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>      ├─ onArenaStateReceived          → index 103
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>      └─ onChatMessage                 → index 107
+</code></pre></div>
+<p><strong>Deduplication:</strong> First definition wins. If interface A and B both define <code>methodX</code>, the first one encountered (depth-first) keeps its position. Subsequent duplicates are skipped.</p>
+<p><strong>Diamond inheritance protection:</strong> A <code>_visited</code> set prevents re-parsing the same interface. If interfaces A and B both implement interface C, C's methods are added when first encountered (via A), and skipped when encountered again (via B).</p>
+<p>This declaration order becomes the <strong>tiebreaker</strong> in method sorting (see Section 4).</p>
+<h3 id="33-entity-registry-sort-size-computation">3.3 Entity Registry &amp; Sort Size Computation<a class="headerlink" href="#33-entity-registry-sort-size-computation" title="Permanent link">&para;</a></h3>
+<p><strong>File:</strong> <code>src/wows_replay_parser/gamedata/entity_registry.py</code></p>
+<p>After loading <code>.def</code> files, the <code>EntityRegistry</code> computes a <code>sort_size</code> for each method and property, then sorts them. This sorted order determines the binary index used in network packets.</p>
+<h4 id="sort-size-rules">Sort Size Rules<a class="headerlink" href="#sort-size-rules" title="Permanent link">&para;</a></h4>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>sort_size</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INT8</code>, <code>UINT8</code>, <code>BOOL</code></td>
+<td>1</td>
+</tr>
+<tr>
+<td><code>INT16</code>, <code>UINT16</code></td>
+<td>2</td>
+</tr>
+<tr>
+<td><code>INT32</code>, <code>UINT32</code>, <code>FLOAT</code></td>
+<td>4</td>
+</tr>
+<tr>
+<td><code>INT64</code>, <code>UINT64</code>, <code>FLOAT64</code></td>
+<td>8</td>
+</tr>
+<tr>
+<td><code>VECTOR2</code></td>
+<td>8</td>
+</tr>
+<tr>
+<td><code>VECTOR3</code></td>
+<td>12</td>
+</tr>
+<tr>
+<td><code>STRING</code>, <code>BLOB</code>, <code>PYTHON</code></td>
+<td>INFINITY (0xFFFF)</td>
+</tr>
+<tr>
+<td><code>FIXED_DICT</code> (no AllowNone)</td>
+<td>sum of field sizes</td>
+</tr>
+<tr>
+<td><code>FIXED_DICT</code> with <code>AllowNone</code></td>
+<td>INFINITY</td>
+</tr>
+<tr>
+<td><code>FIXED_DICT</code> with <code>implementedBy</code></td>
+<td>INFINITY</td>
+</tr>
+<tr>
+<td>Any type with <code>implementedBy</code></td>
+<td>INFINITY</td>
+</tr>
+<tr>
+<td><code>ARRAY</code> (no fixed size)</td>
+<td>INFINITY</td>
+</tr>
+<tr>
+<td><code>ARRAY</code> with <code>&lt;size&gt;N&lt;/size&gt;</code></td>
+<td>N × element_size</td>
+</tr>
+</tbody>
+</table>
+<p>For a method:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>method_sort_size = sum(arg_sort_sizes) + variable_length_header_size
+</code></pre></div>
+<p>If any arg is INFINITY, the whole method is INFINITY + VLH.</p>
+<h4 id="why-this-matters">Why This Matters<a class="headerlink" href="#why-this-matters" title="Permanent link">&para;</a></h4>
+<p>The sort_size determines where each method sits in the binary index table. If we compute the wrong sort_size, we assign the wrong method to an index, and every packet using that index decodes with the wrong schema.</p>
+<hr />
+<h2 id="4-method-index-resolution-the-core-problem">4. Method Index Resolution — The Core Problem<a class="headerlink" href="#4-method-index-resolution-the-core-problem" title="Permanent link">&para;</a></h2>
+<p>This is the hardest part of the parser to get right. Here's the full story.</p>
+<h3 id="41-the-engines-sort-algorithm">4.1 The Engine's Sort Algorithm<a class="headerlink" href="#41-the-engines-sort-algorithm" title="Permanent link">&para;</a></h3>
+<p>BigWorld Engine (v14.4.1) sorts exposed client methods using <code>std::stable_sort</code> with this comparator:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kt">bool</span><span class="w"> </span><span class="nf">operator</span><span class="p">()(</span><span class="n">methodIndex1</span><span class="p">,</span><span class="w"> </span><span class="n">methodIndex2</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">    </span><span class="n">int16</span><span class="w"> </span><span class="n">size1</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">methods_</span><span class="p">[</span><span class="n">methodIndex1</span><span class="p">].</span><span class="n">streamSize</span><span class="p">(</span><span class="nb">true</span><span class="p">);</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="n">int16</span><span class="w"> </span><span class="n">size2</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">methods_</span><span class="p">[</span><span class="n">methodIndex2</span><span class="p">].</span><span class="n">streamSize</span><span class="p">(</span><span class="nb">true</span><span class="p">);</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="c1">// Both variable-length: sort by VLH size ascending</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">size1</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">size2</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="o">-</span><span class="n">size1</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="o">-</span><span class="n">size2</span><span class="p">;</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">    </span><span class="c1">// Both fixed-length: sort by byte count ascending</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">    </span><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">size1</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span><span class="n">size2</span><span class="w"> </span><span class="o">&gt;=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">return</span><span class="w"> </span><span class="n">size1</span><span class="w"> </span><span class="o">&lt;</span><span class="w"> </span><span class="n">size2</span><span class="p">;</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="w">    </span><span class="c1">// Fixed always before variable</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="w">    </span><span class="k">return</span><span class="w"> </span><span class="n">size1</span><span class="w"> </span><span class="o">&gt;</span><span class="w"> </span><span class="n">size2</span><span class="p">;</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="p">}</span>
+</code></pre></div>
+<p>Where <code>streamSize(true)</code> returns:
+- <strong>Positive integer:</strong> fixed-size method (sum of arg bytes)
+- <strong>Negative integer:</strong> variable-size method (<code>-vlh_size</code>, e.g. VLH=1 → -1)</p>
+<p>Because <code>std::stable_sort</code> preserves insertion order for equal elements, <strong>methods with the same streamSize keep their declaration order</strong> (i.e., the depth-first interface merge order from Section 3.2).</p>
+<h3 id="42-our-implementation">4.2 Our Implementation<a class="headerlink" href="#42-our-implementation" title="Permanent link">&para;</a></h3>
+<p>We map this to Python's <code>list.sort()</code> (also stable) with a sort key:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="k">def</span><span class="w"> </span><span class="nf">sort_key</span><span class="p">(</span><span class="n">method</span><span class="p">):</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    <span class="k">if</span> <span class="n">method</span><span class="o">.</span><span class="n">sort_size</span> <span class="o">&gt;=</span> <span class="n">INFINITY</span><span class="p">:</span>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>        <span class="n">vlh</span> <span class="o">=</span> <span class="n">method</span><span class="o">.</span><span class="n">sort_size</span> <span class="o">-</span> <span class="p">(</span><span class="n">INFINITY</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>        <span class="k">return</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">vlh</span><span class="p">)</span>       <span class="c1"># variable: group 1, ascending VLH</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>        <span class="k">return</span> <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">method</span><span class="o">.</span><span class="n">sort_size</span><span class="p">)</span>  <span class="c1"># fixed: group 0, ascending size</span>
+</code></pre></div>
+<p>This produces the same ordering as the C++ comparator:
+1. Fixed-size methods first, ascending by byte count
+2. Variable-size methods second, ascending by VLH (1, then 2, then 4)
+3. Ties broken by declaration order (stable sort preserves it)</p>
+<h3 id="43-tier-1-vs-tier-2-resolution">4.3 Tier 1 vs Tier 2 Resolution<a class="headerlink" href="#43-tier-1-vs-tier-2-resolution" title="Permanent link">&para;</a></h3>
+<p><strong>Tier 1 (deterministic, from .def files):</strong>
+The sort described above produces correct indices for ~95% of methods. The remaining ~5% are in "tie groups" — methods with identical sort_size where the declaration-order tiebreaker is ambiguous.</p>
+<p><strong>Tier 2 (auto-detector, from replay data):</strong>
+The <code>method_id_detector.py</code> module resolves tie groups by observing actual packet payloads:</p>
+<ol>
+<li><strong>Fixed-size matching:</strong> If a method index always has the same payload length, and only one candidate method has that exact arg byte sum → match.</li>
+<li><strong>Trial parsing:</strong> Parse the payload with each candidate method's schema. If only one succeeds (consumes all bytes without error) → match.</li>
+<li><strong>Semantic validation:</strong> When multiple candidates parse successfully, apply domain rules:</li>
+<li>Artillery shots: speed 50–2500 m/s, positions within map bounds</li>
+<li>Torpedoes: direction vector roughly normalized (length 0.3–2.0)</li>
+<li>Chat messages: at least one non-empty string arg</li>
+<li>Vehicle death: entity IDs within 0–10M, reason code 0–200</li>
+<li><strong>Elimination:</strong> If N-1 of N methods in a group are resolved, the last one is assigned.</li>
+<li><strong>Fallback:</strong> Unresolved methods keep their sort-order position.</li>
+</ol>
+<h3 id="44-the-implementedby-bug-fixed">4.4 The <code>implementedBy</code> Bug (Fixed)<a class="headerlink" href="#44-the-implementedby-bug-fixed" title="Permanent link">&para;</a></h3>
+<p>We discovered that 16 type aliases with <code>&lt;implementedBy&gt;</code> tags were being computed as fixed-size, when the engine treats them as variable-size. This shifted method indices:</p>
+<ul>
+<li><strong>Avatar:</strong> 1 method (<code>receivePingerLaunchPosition</code>, uses <code>FLAT_VECTOR</code> + <code>NULLABLE_VECTOR3</code>) was misclassified → all VLH=1 methods shifted by -1</li>
+<li><strong>Vehicle:</strong> 2 methods (<code>receiveGunSyncRotations</code> uses <code>GUN_DIRECTIONS</code>, <code>updateInvisibleWavedPoint</code> uses <code>NULLABLE_VECTOR3</code>) → all methods shifted by -2</li>
+</ul>
+<p>The fix: check <code>alias.has_implemented_by</code> in <code>compute_type_sort_size()</code> and return INFINITY.</p>
+<h3 id="45-verification">4.5 Verification<a class="headerlink" href="#45-verification" title="Permanent link">&para;</a></h3>
+<p><code>scripts/verify_method_sort.py</code> validates the sort against real replay data using semantic validators as ground truth. After the implementedBy fix: <strong>10/10 verified methods correct (100%)</strong> across unique sort_size methods and tie groups alike.</p>
+<hr />
+<h2 id="5-packet-decoding">5. Packet Decoding<a class="headerlink" href="#5-packet-decoding" title="Permanent link">&para;</a></h2>
+<p><strong>File:</strong> <code>src/wows_replay_parser/packets/decoder.py</code></p>
+<h3 id="51-packet-header">5.1 Packet Header<a class="headerlink" href="#51-packet-header" title="Permanent link">&para;</a></h3>
+<p>Every packet in the decompressed stream has a 12-byte header:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>┌───────────────┬───────────────┬───────────────┐
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>│ payload_size  │  packet_type  │    clock      │
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>│   uint32 LE   │   uint32 LE   │  float32 LE   │
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>│   (4 bytes)   │   (4 bytes)   │  (4 bytes)    │
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>└───────────────┴───────────────┴───────────────┘
+</code></pre></div>
+<p><code>clock</code> is the game time in seconds since match start.</p>
+<h3 id="52-packet-types">5.2 Packet Types<a class="headerlink" href="#52-packet-types" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Code</th>
+<th>Description</th>
+<th>Frequency</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>BASE_PLAYER_CREATE</code></td>
+<td>0x00</td>
+<td>Creates the player's Avatar entity</td>
+<td>1/replay</td>
+</tr>
+<tr>
+<td><code>CELL_PLAYER_CREATE</code></td>
+<td>0x01</td>
+<td>Attaches cell data to base player</td>
+<td>1/replay</td>
+</tr>
+<tr>
+<td><code>ENTITY_CONTROL</code></td>
+<td>0x02</td>
+<td>Grants/revokes control of an entity</td>
+<td>1/replay</td>
+</tr>
+<tr>
+<td><code>ENTITY_ENTER</code></td>
+<td>0x03</td>
+<td>Entity enters Area of Interest</td>
+<td>low</td>
+</tr>
+<tr>
+<td><code>ENTITY_LEAVE</code></td>
+<td>0x04</td>
+<td>Entity leaves AoI</td>
+<td>~100</td>
+</tr>
+<tr>
+<td><code>ENTITY_CREATE</code></td>
+<td>0x05</td>
+<td>Creates any entity (ships, zones, ...)</td>
+<td>~111</td>
+</tr>
+<tr>
+<td><code>ENTITY_PROPERTY</code></td>
+<td>0x07</td>
+<td>Property value update</td>
+<td>~41k</td>
+</tr>
+<tr>
+<td><code>ENTITY_METHOD</code></td>
+<td>0x08</td>
+<td>Remote method call</td>
+<td>~37k</td>
+</tr>
+<tr>
+<td><code>POSITION</code></td>
+<td>0x0A</td>
+<td>Entity position update (other ships)</td>
+<td>~24k</td>
+</tr>
+<tr>
+<td><code>SERVER_TICK</code></td>
+<td>0x0E</td>
+<td>Time sync tick</td>
+<td>~7.8k</td>
+</tr>
+<tr>
+<td><code>SERVER_TIMESTAMP</code></td>
+<td>0x0F</td>
+<td>Absolute server time</td>
+<td>1/replay</td>
+</tr>
+<tr>
+<td><code>VERSION</code></td>
+<td>0x16</td>
+<td>Game version string</td>
+<td>1/replay</td>
+</tr>
+<tr>
+<td><code>GUN_MARKER</code></td>
+<td>0x18</td>
+<td>Aim point indicator</td>
+<td>~10k</td>
+</tr>
+<tr>
+<td><code>PLAYER_NET_STATS</code></td>
+<td>0x1D</td>
+<td>Network statistics</td>
+<td>~10k</td>
+</tr>
+<tr>
+<td><code>OWN_SHIP</code></td>
+<td>0x20</td>
+<td>Which Vehicle the player controls</td>
+<td>1/replay</td>
+</tr>
+<tr>
+<td><code>BATTLE_RESULTS</code></td>
+<td>0x22</td>
+<td>Post-battle JSON blob</td>
+<td>1/replay</td>
+</tr>
+<tr>
+<td><code>NESTED_PROPERTY</code></td>
+<td>0x23</td>
+<td>Partial property update</td>
+<td>~3.7k</td>
+</tr>
+<tr>
+<td><code>CAMERA</code></td>
+<td>0x25</td>
+<td>Camera position/rotation/FOV</td>
+<td>~10k</td>
+</tr>
+<tr>
+<td><code>BASE_PLAYER_CREATE_STUB</code></td>
+<td>0x26</td>
+<td>Lightweight base player create</td>
+<td>1/replay</td>
+</tr>
+<tr>
+<td><code>CAMERA_MODE</code></td>
+<td>0x27</td>
+<td>Camera mode switch</td>
+<td>~18</td>
+</tr>
+<tr>
+<td><code>MAP</code></td>
+<td>0x28</td>
+<td>Map identifier + space info</td>
+<td>1/replay</td>
+</tr>
+<tr>
+<td><code>NON_VOLATILE_POSITION</code></td>
+<td>0x2A</td>
+<td>Static entity position (smoke, zones)</td>
+<td>~588</td>
+</tr>
+<tr>
+<td><code>PLAYER_ORIENTATION</code></td>
+<td>0x2C</td>
+<td>Self-ship position (not via 0x0A)</td>
+<td>~15k</td>
+</tr>
+<tr>
+<td><code>CRUISE_STATE</code></td>
+<td>0x32</td>
+<td>Speed/rudder settings</td>
+<td>~442</td>
+</tr>
+<tr>
+<td><code>SHOT_TRACKING</code></td>
+<td>0x33</td>
+<td>Weapon tracking state</td>
+<td>~9</td>
+</tr>
+</tbody>
+</table>
+<h3 id="53-entity_method-packet-format">5.3 ENTITY_METHOD Packet Format<a class="headerlink" href="#53-entity_method-packet-format" title="Permanent link">&para;</a></h3>
+<p>This is the most important packet type — it carries game events.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>┌────────────┬────────────┬──────────────┬──────────────────┐
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>│ entity_id  │ method_id  │ payload_len  │ serialized_args  │
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>│  uint32 LE │  uint32 LE │  uint32 LE   │  payload_len B   │
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>└────────────┴────────────┴──────────────┴──────────────────┘
+</code></pre></div>
+<p>The <code>method_id</code> is looked up via the entity's sorted method table (see Section 4). The <code>serialized_args</code> are parsed with the method's dynamically-built <code>construct</code> schema.</p>
+<h3 id="54-binary-serialization-details">5.4 Binary Serialization Details<a class="headerlink" href="#54-binary-serialization-details" title="Permanent link">&para;</a></h3>
+<p>The <code>SchemaBuilder</code> generates <code>construct</code> parsers for each method. Key encoding rules:</p>
+<p><strong>Primitives:</strong> Standard little-endian (<code>INT32</code> → <code>cs.Int32sl</code>, <code>FLOAT</code> → <code>cs.Float32l</code>, etc.)</p>
+<p><strong>VECTOR3:</strong> <code>Struct("x"/Float32l, "y"/Float32l, "z"/Float32l)</code> (12 bytes)</p>
+<p><strong>ARRAY count prefix:</strong> Always <code>uint8</code> at ALL nesting levels. No VLH escalation for array counts.</p>
+<p><strong>STRING/BLOB length prefix (inside method calls):</strong>
+Uses VLH-aware escalating encoding:
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>if first_byte &lt; 0xFF:
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>    length = first_byte                                    (1 byte prefix)
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a>elif first_byte == 0xFF:
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>    length = next_u16_LE                                   (3 bytes prefix)
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a>    skip 1 padding byte
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>elif first_byte == 0xFF and next_u16 == 0xFFFF:
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a>    length = next_u32_LE                                   (7 bytes prefix)
+</code></pre></div></p>
+<p><strong>FIXED_DICT:</strong> Struct of fields in declaration order. If <code>AllowNone</code>, prepend <code>u8</code> flag (0=None, nonzero=data follows).</p>
+<p><strong>Property updates</strong> use a different encoding: always <code>u32</code> length prefix for BLOBs (no VLH escalation). This distinction is critical — method args and property values use different blob prefix encodings.</p>
+<hr />
+<h2 id="6-entity-lifecycle-type-resolution">6. Entity Lifecycle &amp; Type Resolution<a class="headerlink" href="#6-entity-lifecycle-type-resolution" title="Permanent link">&para;</a></h2>
+<h3 id="61-entity-creation">6.1 Entity Creation<a class="headerlink" href="#61-entity-creation" title="Permanent link">&para;</a></h3>
+<p>Entities are created by three packet types:</p>
+<p><strong><code>BASE_PLAYER_CREATE</code> (0x00)</strong> — The player's own controller entity.
+- WoWS-specific: the <code>type_idx</code> in this packet does <strong>not</strong> map to <code>entities.xml</code>
+- We resolve the type dynamically: find the entity type with the most ClientMethods (= Avatar in WoWS, 178 methods)
+- Only 1 per replay</p>
+<p><strong><code>BASE_PLAYER_CREATE_STUB</code> (0x26)</strong> — Same entity, lightweight create without properties. Arrives before BASE_PLAYER_CREATE.</p>
+<p><strong><code>ENTITY_CREATE</code> (0x05)</strong> — All other entities (ships, capture zones, smoke, etc.)
+- Format: <code>entity_id(u32) + type_idx(u16) + vehicle_id(u32) + space_id(u32) + position(3×f32) + rotation(3×f32) + state_length(u32) + state_data</code>
+- <code>type_idx</code> correctly maps to <code>entities.xml</code>
+- Inline state: <code>num_props(u8) + [prop_id(u8) + typed_value] × num_props</code></p>
+<h3 id="62-entity-type-remapping">6.2 Entity Type Remapping<a class="headerlink" href="#62-entity-type-remapping" title="Permanent link">&para;</a></h3>
+<p>BigWorld sends ENTITY_CREATE with the <strong>base entity type</strong>, not the cell type. In WoWS:</p>
+<table>
+<thead>
+<tr>
+<th>Packet says</th>
+<th>Actually is</th>
+<th>How we detect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Account (idx=2)</td>
+<td>Vehicle</td>
+<td>num_props &gt; Account's property count → trial-parse with Vehicle schema</td>
+</tr>
+<tr>
+<td>OfflineEntity (idx=4)</td>
+<td>Vehicle or Building</td>
+<td>same detection</td>
+</tr>
+<tr>
+<td>InteractiveObject (idx=14)</td>
+<td>InteractiveZone</td>
+<td>same detection</td>
+</tr>
+</tbody>
+</table>
+<p>This happens because other players' ships are created with the Account base type but carry Vehicle cell properties.</p>
+<h3 id="63-entity-type-map-entitiesxml">6.3 Entity Type Map (<code>entities.xml</code>)<a class="headerlink" href="#63-entity-type-map-entitiesxml" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a>Index  Entity              Role
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a>─────  ──────────────────  ──────────────────────
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>  0    Avatar              Player controller (178 ClientMethods)
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a>  1    Vehicle             Ship (83 methods, 54 client properties)
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a>  2    Account             Player account (remapped → Vehicle)
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>  3    SmokeScreen         Smoke entity
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>  4    OfflineEntity       Disconnected player (remapped → Vehicle)
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>  5    VehicleAppearance   Unused in replays
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>  6    Login               Login entity
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>  7    BattleEntity        Base battle entity
+<a id="__codelineno-13-11" name="__codelineno-13-11" href="#__codelineno-13-11"></a>  8    Building            Destructible structure
+<a id="__codelineno-13-12" name="__codelineno-13-12" href="#__codelineno-13-12"></a>  9    MasterChanger       Channel controller
+<a id="__codelineno-13-13" name="__codelineno-13-13" href="#__codelineno-13-13"></a> 10    BattleLogic         Score tracking (2 methods, 11 properties)
+<a id="__codelineno-13-14" name="__codelineno-13-14" href="#__codelineno-13-14"></a> 11    ReplayLeech         Replay observer
+<a id="__codelineno-13-15" name="__codelineno-13-15" href="#__codelineno-13-15"></a> 12    ReplayConnectionHandler
+<a id="__codelineno-13-16" name="__codelineno-13-16" href="#__codelineno-13-16"></a> 13    InteractiveZone     Capture point
+<a id="__codelineno-13-17" name="__codelineno-13-17" href="#__codelineno-13-17"></a> 14    InteractiveObject   Remapped → InteractiveZone
+</code></pre></div>
+<h3 id="64-position-tracking">6.4 Position Tracking<a class="headerlink" href="#64-position-tracking" title="Permanent link">&para;</a></h3>
+<p>The self-player's position is <strong>not</strong> sent via <code>POSITION</code> (0x0A). Instead:</p>
+<ul>
+<li><strong>Other ships:</strong> <code>POSITION</code> (0x0A) — 45 bytes: <code>entity_id, space_id, position(V3), direction(V3), rotation(V3), is_on_ground(u8)</code></li>
+<li><strong>Self ship:</strong> <code>PLAYER_ORIENTATION</code> (0x2C) — 32 bytes: <code>pid, parent_id, position(V3), rotation(V3)</code>. Only entries with <code>parent_id==0</code> are the actual ship position.</li>
+<li><strong>Static entities (smoke, zones):</strong> <code>NON_VOLATILE_POSITION</code> (0x2A) — same as POSITION but without direction/is_on_ground.</li>
+</ul>
+<hr />
+<h2 id="7-state-tracking">7. State Tracking<a class="headerlink" href="#7-state-tracking" title="Permanent link">&para;</a></h2>
+<p><strong>File:</strong> <code>src/wows_replay_parser/state/tracker.py</code></p>
+<p>The <code>GameStateTracker</code> accumulates entity state over time from decoded packets.</p>
+<h3 id="data-structures">Data Structures<a class="headerlink" href="#data-structures" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>_current[entity_id][property_name]</code> → current value</li>
+<li><code>_history</code> → list of <code>PropertyChange(entity_id, prop, old, new, timestamp)</code></li>
+<li><code>_positions[entity_id]</code> → list of <code>(timestamp, (x, y, z), yaw)</code></li>
+<li><code>_minimap_positions</code> → vision data from <code>updateMinimapVisionInfo</code></li>
+<li><code>_death_positions</code>, <code>_consumable_activations</code> → event-specific tracking</li>
+</ul>
+<h3 id="queries">Queries<a class="headerlink" href="#queries" title="Permanent link">&para;</a></h3>
+<p><strong><code>state_at(t) → GameState</code></strong>
+Returns a full snapshot: all ships' health/team/alive status, battle state (stage, time, scores), all property values as of time <code>t</code>. Uses cached snapshots every 5 seconds + incremental replay forward.</p>
+<p><strong><code>iter_states(timestamps) → Iterator[GameState]</code></strong>
+Optimized for sequential rendering. O(delta) per frame instead of O(history) per frame. Steps forward through property changes rather than replaying from scratch.</p>
+<p><strong><code>ship_state(entity_id, t) → ShipState</code></strong>
+Single ship query: health, max_health, team_id, is_alive, visibility_flags, burning_flags.</p>
+<hr />
+<h2 id="8-event-stream-generation">8. Event Stream Generation<a class="headerlink" href="#8-event-stream-generation" title="Permanent link">&para;</a></h2>
+<p><strong>Files:</strong> <code>src/wows_replay_parser/events/models.py</code>, <code>stream.py</code></p>
+<p>The <code>EventStream</code> maps decoded packets to typed game events:</p>
+<h3 id="method-event-mapping">Method → Event Mapping<a class="headerlink" href="#method-event-mapping" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Event Type</th>
+<th>Key Fields</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Avatar.receiveVehicleDeath</code></td>
+<td><code>DeathEvent</code></td>
+<td>victim_id, killer_id, death_reason</td>
+</tr>
+<tr>
+<td><code>Avatar.receiveArtilleryShots</code></td>
+<td><code>ShotCreatedEvent[]</code></td>
+<td>per-shell: position, speed, target, shotID</td>
+</tr>
+<tr>
+<td><code>Avatar.receiveTorpedoes</code></td>
+<td><code>TorpedoCreatedEvent[]</code></td>
+<td>per-torpedo: position, direction, armed</td>
+</tr>
+<tr>
+<td><code>Avatar.receiveShotKills</code></td>
+<td><code>ShotDestroyedEvent[]</code></td>
+<td>impact position, armor_penetration, hit_type</td>
+</tr>
+<tr>
+<td><code>Avatar.receiveShellInfo</code></td>
+<td><code>DamageEvent</code></td>
+<td>target_id, damage, ammo_id</td>
+</tr>
+<tr>
+<td><code>Avatar.onChatMessage</code></td>
+<td><code>ChatEvent</code></td>
+<td>sender_id, channel, message</td>
+</tr>
+<tr>
+<td><code>Avatar.updateMinimapVisionInfo</code></td>
+<td><code>MinimapVisionEvent[]</code></td>
+<td>per-ship: vehicleID, x/y, heading, visible</td>
+</tr>
+<tr>
+<td><code>Avatar.onAchievementEarned</code></td>
+<td><code>AchievementEvent</code></td>
+<td>player_id, achievement_id</td>
+</tr>
+<tr>
+<td><code>Vehicle.kill</code></td>
+<td><code>DeathEvent</code></td>
+<td>victim_id, killer_id, death_reason</td>
+</tr>
+<tr>
+<td><code>Vehicle.onConsumableUsed</code></td>
+<td><code>ConsumableEvent</code></td>
+<td>consumable_id, work_time_left</td>
+</tr>
+<tr>
+<td>Position packets (0x0A, 0x2C)</td>
+<td><code>PositionEvent</code></td>
+<td>x, y, z, yaw, speed</td>
+</tr>
+<tr>
+<td>Property updates (0x07)</td>
+<td><code>PropertyUpdateEvent</code></td>
+<td>entity_id, property_name, value</td>
+</tr>
+<tr>
+<td>Unmatched packets</td>
+<td><code>RawEvent</code></td>
+<td>raw packet data</td>
+</tr>
+</tbody>
+</table>
+<h3 id="minimap-vision-unpacking">Minimap Vision Unpacking<a class="headerlink" href="#minimap-vision-unpacking" title="Permanent link">&para;</a></h3>
+<p><code>updateMinimapVisionInfo</code> sends two arrays of <code>{vehicleID: u32, packedData: u32}</code>. The <code>packedData</code> is a bitfield encoding position and heading:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="n">raw_x</span> <span class="o">=</span> <span class="p">(</span><span class="n">packed</span> <span class="o">&gt;&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mh">0x3FF</span>     <span class="c1"># 10 bits, 0-1023</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="n">raw_y</span> <span class="o">=</span> <span class="p">(</span><span class="n">packed</span> <span class="o">&gt;&gt;</span> <span class="mi">10</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mh">0x3FF</span>    <span class="c1"># 10 bits, 0-1023</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="n">heading</span> <span class="o">=</span> <span class="p">(</span><span class="n">packed</span> <span class="o">&gt;&gt;</span> <span class="mi">20</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mh">0x1FF</span>  <span class="c1"># 9 bits, degrees</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="n">flags</span> <span class="o">=</span> <span class="p">(</span><span class="n">packed</span> <span class="o">&gt;&gt;</span> <span class="mi">29</span><span class="p">)</span> <span class="o">&amp;</span> <span class="mh">0x7</span>      <span class="c1"># 3 bits</span>
+</code></pre></div>
+<p>World coordinates are computed from map bounds.</p>
+<hr />
+<h2 id="9-player-roster-enrichment">9. Player Roster Enrichment<a class="headerlink" href="#9-player-roster-enrichment" title="Permanent link">&para;</a></h2>
+<p><strong>File:</strong> <code>src/wows_replay_parser/roster.py</code></p>
+<p>Matches player metadata (from JSON header) to in-game entity IDs.</p>
+<h3 id="data-sources">Data Sources<a class="headerlink" href="#data-sources" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>JSON header</strong> <code>meta["vehicles"]</code> — AccountId, player name, ship type, clan</li>
+<li><strong><code>onArenaStateReceived</code></strong> method — pickle blob with full player state</li>
+</ol>
+<h3 id="arena-state-format">Arena State Format<a class="headerlink" href="#arena-state-format" title="Permanent link">&para;</a></h3>
+<p>The <code>onArenaStateReceived</code> method (called once at battle start) carries:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>arenaUniqueId(INT64) + teamBuildTypeId(INT8)
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>+ preBattlesInfo(BLOB)   ← pickle
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>+ playersStates(BLOB)    ← pickle: list of (int_key, value) tuples per player
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>+ botsStates(BLOB)       ← pickle
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>+ observersState(BLOB)   ← pickle
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a>+ buildingsInfo(BLOB)    ← pickle
+</code></pre></div>
+<p>The BLOBs use VLH-1 encoding (see Section 5.4). The pickles are Python 2.7 protocol 2, deserialized with <code>encoding='latin-1'</code> and a safe unpickler.</p>
+<p>Each player in <code>playersStates</code> is a list of <code>(int_key, value)</code> tuples:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="p">[</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>  <span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">502524043</span><span class="p">),</span>        <span class="c1"># accountDBID</span>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a>  <span class="p">(</span><span class="mi">6</span><span class="p">,</span> <span class="s1">&#39;TTT&#39;</span><span class="p">),</span>            <span class="c1"># clanTag</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>  <span class="p">(</span><span class="mi">11</span><span class="p">,</span> <span class="mi">502524043</span><span class="p">),</span>       <span class="c1"># id (= AccountId, matches JSON header)</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a>  <span class="p">(</span><span class="mi">25</span><span class="p">,</span> <span class="s1">&#39;Dutch_Elephant&#39;</span><span class="p">),</span><span class="c1"># name</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a>  <span class="p">(</span><span class="mi">33</span><span class="p">,</span> <span class="mi">1041009</span><span class="p">),</span>         <span class="c1"># shipId (= Vehicle entity_id in game world)</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>  <span class="p">(</span><span class="mi">36</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>               <span class="c1"># teamId</span>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a>  <span class="o">...</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="p">]</span>
+</code></pre></div>
+<h3 id="matching-chain">Matching Chain<a class="headerlink" href="#matching-chain" title="Permanent link">&para;</a></h3>
+<ol>
+<li>Scan early ENTITY_METHOD packets for valid pickle data (content probing)</li>
+<li>Deserialize <code>playersStates</code> pickle</li>
+<li>Match to JSON header: <code>arena_player["id"] == meta_vehicle["id"]</code></li>
+<li>Use <code>arena_player["shipId"]</code> as the Vehicle entity_id</li>
+</ol>
+<hr />
+<h2 id="10-current-status-known-limitations">10. Current Status &amp; Known Limitations<a class="headerlink" href="#10-current-status-known-limitations" title="Permanent link">&para;</a></h2>
+<h3 id="decode-rate-100">Decode Rate: 100%<a class="headerlink" href="#decode-rate-100" title="Permanent link">&para;</a></h3>
+<p>As of 2026-03-28, the parser achieves <strong>100% decode rate</strong> on all Avatar (178) and Vehicle (83) ClientMethods. Method index assignment is verified correct against real replay data (10/10 methods, including tie groups). Test replay: 37,307/37,309 method calls decoded successfully (2 failures are chat message encoding edge cases).</p>
+<p>The sort_size computation is now fully correct:
+- <code>std::stable_sort</code> by <code>streamSize</code> (BigWorld v14.4.1 convention)
+- Declaration order (depth-first interface merge) as tiebreaker
+- <code>implementedBy</code> types correctly treated as variable-length
+- Base player entity correctly identified as Avatar (not Vehicle)</p>
+<p>The auto-detector (<code>method_id_detector.py</code>) is still enabled but <strong>redundant</strong> for Avatar and Vehicle. It may help with Account entity tie groups (lobby methods, not critical for gameplay).</p>
+<h3 id="fully-working-77-methods-cataloged">Fully Working (77 methods cataloged)<a class="headerlink" href="#fully-working-77-methods-cataloged" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Ship positions — Position (0x0A) + PlayerOrientation (0x2C)</li>
+<li>All combat events — artillery, torpedoes, depth charges, plane projectiles, explosions, kills, damage</li>
+<li>All vision/detection — minimap vision, spotting, disappearing</li>
+<li>All squadrons — 16 receive_* methods (add, remove, update, health, death, state changes)</li>
+<li>All consumables — activation, interruption, cooldowns, air support</li>
+<li>All weapon state — gun sync (yaw/pitch/reload), torpedo tubes, ammo switching, firing events</li>
+<li>Game state — arena state, game room updates, battle end, player data, achievements</li>
+<li>Player roster — pickle deserialization, entity ID matching</li>
+<li>Chat messages (94.6%, 2 encoding edge cases out of 37)</li>
+<li>Damage stats, shell info, hit locations</li>
+<li>Ship physics, ship cracks, rage mode</li>
+</ul>
+<h3 id="partially-working">Partially Working<a class="headerlink" href="#partially-working" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Capture zones:</strong> InteractiveZone property updates flow through, but NESTED_PROPERTY (0x23) deep navigation for CAPTURE_LOGIC_STATE is incomplete</li>
+<li><strong>Account entity methods:</strong> Tie groups unresolved (lobby/pre-battle, not gameplay-critical)</li>
+</ul>
+<h3 id="not-implemented-state-model-only-packets-still-decode">Not Implemented (state model only — packets still decode)<a class="headerlink" href="#not-implemented-state-model-only-packets-still-decode" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Building entity state tracking</li>
+<li>Smoke screen state model (positions tracked, no lifetime/radius)</li>
+<li>NESTED_PROPERTY (0x23) deep navigation for complex nested types</li>
+</ul>
+<h3 id="architecture-constraints">Architecture Constraints<a class="headerlink" href="#architecture-constraints" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>General-purpose parser:</strong> Decodes ALL packets, not just renderer-needed ones</li>
+<li><strong>No data loss:</strong> Raw payloads always accessible; unknown packets become <code>RawEvent</code></li>
+<li><strong>Additive events:</strong> New event types don't break existing ones</li>
+<li><strong>No renderer dependencies:</strong> Parser is standalone; renderer is one consumer</li>
+</ul>
+<hr />
+<h2 id="appendix-file-map">Appendix: File Map<a class="headerlink" href="#appendix-file-map" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>src/wows_replay_parser/
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>├── api.py                    Top-level parse_replay() + ParsedReplay
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a>├── gamedata/
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>│   ├── alias_registry.py     alias.xml → TypeAlias resolution
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a>│   ├── def_loader.py         .def XML → EntityDef (interface merging)
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>│   ├── entity_registry.py    sort_size computation, method/property indexing
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a>│   ├── schema_builder.py     Dynamic construct schema generation
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>│   └── blob_decoders.py      BLOB decoders (zipped, msgpack, pickle)
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>├── packets/
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a>│   ├── types.py              PacketType enum + Packet dataclass
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a>│   ├── decoder.py            Packet stream decoding + entity tracking
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>│   ├── type_id_detector.py   Auto-detect type_id → entity_name
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a>│   └── method_id_detector.py Tie-group resolution from payload data
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a>├── replay/
+<a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a>│   └── reader.py             .wowsreplay container: JSON + decrypt + decompress
+<a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a>├── state/
+<a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a>│   ├── tracker.py            GameStateTracker — property history + snapshots
+<a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a>│   └── models.py             ShipState, BattleState, GameState, PropertyChange
+<a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a>├── events/
+<a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a>│   ├── models.py             All event types (GameEvent subclasses)
+<a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a>│   └── stream.py             Packet → Event transformation
+<a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a>├── roster.py                 Player roster enrichment (pickle + matching)
+<a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a>├── ribbons.py                Ribbon derivation from hit events
+<a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a>├── merge.py                  Dual perspective replay merging
+<a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a>└── cli.py                    Click CLI (info, parse, events, state)
+<a id="__codelineno-17-26" name="__codelineno-17-26" href="#__codelineno-17-26"></a>
+<a id="__codelineno-17-27" name="__codelineno-17-27" href="#__codelineno-17-27"></a>wows-gamedata/data/
+<a id="__codelineno-17-28" name="__codelineno-17-28" href="#__codelineno-17-28"></a>├── scripts_entity/
+<a id="__codelineno-17-29" name="__codelineno-17-29" href="#__codelineno-17-29"></a>│   ├── entity_defs/          *.def files (15 entity types)
+<a id="__codelineno-17-30" name="__codelineno-17-30" href="#__codelineno-17-30"></a>│   │   ├── interfaces/       Shared interface .def files (22)
+<a id="__codelineno-17-31" name="__codelineno-17-31" href="#__codelineno-17-31"></a>│   │   └── alias.xml         Type alias definitions
+<a id="__codelineno-17-32" name="__codelineno-17-32" href="#__codelineno-17-32"></a>│   └── entities.xml          Entity type ID mapping (0=Avatar, 1=Vehicle, ...)
+<a id="__codelineno-17-33" name="__codelineno-17-33" href="#__codelineno-17-33"></a>├── spaces/&lt;map&gt;/minimap.png  Minimap images
+<a id="__codelineno-17-34" name="__codelineno-17-34" href="#__codelineno-17-34"></a>├── gui/                      Extracted PNGs (HUD, icons, consumables)
+<a id="__codelineno-17-35" name="__codelineno-17-35" href="#__codelineno-17-35"></a>├── split/&lt;Type&gt;/&lt;Name&gt;.json  Per-entity GameParams (ships, projectiles, etc.)
+<a id="__codelineno-17-36" name="__codelineno-17-36" href="#__codelineno-17-36"></a>└── scripts_decrypted/        Decompiled client scripts + constants
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "content.action.edit", "navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "search.highlight", "search.suggest", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
