@@ -1398,6 +1398,8 @@ class GameStateTracker:
                 continue
             if entity_id in self._weather_zone_ids:
                 continue
+            if entity_id in self._buff_zone_ids:
+                continue
             cs_raw = props.get("componentsState", {})
             cap_logic = _container_get(cs_raw, "captureLogic") or {}
             ctrl_point = _container_get(cs_raw, "controlPoint") or {}
@@ -1536,9 +1538,11 @@ class GameStateTracker:
 
         result: dict[int, BuffZoneState] = {}
         for entity_id in self._buff_zone_ids:
+            props = all_state.get(entity_id)
+            if props is None:
+                continue
             if not self.is_entity_in_aoi(entity_id, t):
                 continue
-            props = all_state.get(entity_id, {})
             pos_data = self.position_at(entity_id, t)
             position = pos_data if pos_data else (0.0, 0.0, 0.0)
 

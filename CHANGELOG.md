@@ -4,7 +4,22 @@ All notable changes to `wows-replay-parser` are documented here.
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-04-27
+
 ### Fixed
+- **Buff zone state asymmetry** — `state.buff_zones` no longer includes
+  type==6 InteractiveZones that haven't spawned yet. `_build_buff_zones()`
+  now gates on entity presence in the live `all_state` snapshot (mirroring
+  `_build_capture_points`); the previous `is_entity_in_aoi` check returned
+  True for never-yet-created entities and surfaced all 14 Arms Race buff
+  drops at t=0 instead of at their actual ~48s/168s/289s/409s/528s spawn
+  times.
+- **Buff zones leaking into `state.battle.capture_points`** — the Stage 3.6
+  split moved type==6 zones into `state.buff_zones` but `_build_capture_points`
+  never filtered `_buff_zone_ids` (only `_weather_zone_ids`). Buff drops were
+  showing up in both collections; downstream consumers iterating
+  `capture_points` were rendering them as full cap circles. Now skipped
+  symmetrically with weather zones.
 - **M-3: Ribbon init-burst anomaly** — `extract_recording_player_ribbons()` now
   tracks per-array-slot state (`ribbons[i]` indexed) instead of folding by
   ribbonId. Each slot's ribbonId is locked at first sighting; subsequent
