@@ -57,6 +57,11 @@ _SHIP_PROPERTY_MAP: dict[str, str] = {
 _SNAPSHOT_INTERVAL = 5.0  # seconds between cached snapshots
 _EMPTY_TURRET_YAWS: dict[int, float] = {}
 
+# Types that _snapshot_value can return as-is (immutable / nothing to recurse
+# into). Membership uses ``type(x) in _SNAPSHOT_PRIMITIVE_TYPES`` rather than
+# isinstance to skip the MRO walk on the hot path.
+_SNAPSHOT_PRIMITIVE_TYPES = frozenset({int, float, str, bool, bytes, type(None)})
+
 
 class GameStateTracker:
     """Tracks entity property state over time from decoded packets."""
@@ -1377,7 +1382,13 @@ class GameStateTracker:
         construct Containers are dict subclasses with a _io (BytesIO)
         attribute that cannot be deepcopied. We recursively convert to
         plain dicts, skipping private keys like '_io'.
+
+        Primitives are ~95% of values seen here (int/float/str/bool/bytes
+        from leaf properties); checking ``type(...) in _PRIMITIVES``
+        short-circuits before paying for two isinstance() MRO walks.
         """
+        if type(value) in _SNAPSHOT_PRIMITIVE_TYPES:
+            return value
         if isinstance(value, dict):
             return {
                 k: GameStateTracker._snapshot_value(v)

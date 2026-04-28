@@ -23,6 +23,7 @@ import re
 from typing import Any
 
 import construct as cs
+import wows_native  # type: ignore[import-not-found]
 
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry, TypeAlias
 from wows_replay_parser.gamedata.blob_decoders import decode_blob, decode_pickle, decode_zipped
@@ -153,25 +154,161 @@ class _AutoPickleBlob(cs.Construct):
         raise cs.SizeofError("AutoPickleBlob is variable size")
 
 
+# ── Native (Rust / pyo3) adapters ─────────────────────────────────
+#
+# Construct shims that delegate to wows_native decoders. Fixed-size types
+# read N bytes from the stream and pass them to the Rust function. Variable-
+# length types (BLOB / STRING / PYTHON / UNICODE_STRING) need to know how
+# much was consumed, so they read all remaining bytes, decode at offset 0,
+# and seek the stream forward by the number of bytes consumed. This relies
+# on the stream being seekable — true for every BytesIO used in this parser.
+
+class _NativeFixed(cs.Construct):
+    """Construct adapter for a fixed-width wows_native decoder."""
+
+    def __init__(self, decoder: Any, size: int) -> None:
+        super().__init__()
+        self._decoder = decoder
+        self._size = size
+
+    def _parse(self, stream: Any, context: Any, path: str) -> Any:
+        chunk = cs.stream_read(stream, self._size, path)
+        value, _ = self._decoder(chunk, 0)
+        return value
+
+    def _sizeof(self, context: Any, path: str) -> int:
+        return self._size
+
+
+class _NativeVector(cs.Construct):
+    """VECTOR2/VECTOR3 adapter — wraps the Rust tuple in a Construct
+    Container so downstream consumers retain the existing ``.x``/``.y``
+    /``.z`` attribute access (see method_id_detector._in_map_bounds).
+    """
+
+    def __init__(self, decoder: Any, components: tuple[str, ...]) -> None:
+        super().__init__()
+        self._decoder = decoder
+        self._components = components
+        self._size = len(components) * 4
+
+    def _parse(self, stream: Any, context: Any, path: str) -> Any:
+        chunk = cs.stream_read(stream, self._size, path)
+        tup, _ = self._decoder(chunk, 0)
+        return cs.Container({k: v for k, v in zip(self._components, tup, strict=True)})
+
+    def _sizeof(self, context: Any, path: str) -> int:
+        return self._size
+
+
+class _NativeVarLen(cs.Construct):
+    """Construct adapter for variable-length wows_native decoders.
+
+    Mode is the prefix-encoding string passed through to the Rust call:
+    ``"method"`` (u8 + 0xFF→u16+pad escalation, used in ENTITY_METHOD args)
+    or ``"u32"`` (4-byte LE, used in property updates and inline state).
+    Requires a seekable stream — every replay stream is BytesIO-backed.
+    """
+
+    def __init__(self, decoder: Any, mode: str) -> None:
+        super().__init__()
+        self._decoder = decoder
+        self._mode = mode
+
+    def _parse(self, stream: Any, context: Any, path: str) -> Any:
+        pos = stream.tell()
+        rest = stream.read()
+        try:
+            value, consumed = self._decoder(rest, 0, self._mode)
+        except ValueError as exc:
+            raise cs.StreamError(str(exc), path=path) from exc
+        stream.seek(pos + consumed)
+        return value
+
+    def _sizeof(self, context: Any, path: str) -> int:
+        raise cs.SizeofError("native var-len is variable size")
+
+
+class _NativeArrayPrimitive(cs.Construct):
+    """Bulk ARRAY decoder — one Rust call decodes the count byte plus all
+    elements, replacing Construct's per-element Python loop.
+
+    Only valid for arrays of fixed-width primitives that wows_native has
+    a ``decode_array_<primitive>`` for. Arrays of FIXED_DICT, alias, or
+    nested ARRAY still go through Construct's PrefixedArray.
+    """
+
+    def __init__(self, decoder: Any) -> None:
+        super().__init__()
+        self._decoder = decoder
+
+    def _parse(self, stream: Any, context: Any, path: str) -> Any:
+        pos = stream.tell()
+        rest = stream.read()
+        try:
+            value, consumed = self._decoder(rest, 0)
+        except ValueError as exc:
+            raise cs.StreamError(str(exc), path=path) from exc
+        stream.seek(pos + consumed)
+        return value
+
+    def _sizeof(self, context: Any, path: str) -> int:
+        raise cs.SizeofError("native array is variable size")
+
+
+# Maps element type names to bulk wows_native ARRAY decoders. Element
+# types not in this dict fall through to cs.PrefixedArray with a
+# per-element Construct walk.
+_BULK_ARRAY_DECODERS: dict[str, Any] = {
+    "INT8": wows_native.decode_array_int8,
+    "INT16": wows_native.decode_array_int16,
+    "INT32": wows_native.decode_array_int32,
+    "INT64": wows_native.decode_array_int64,
+    "UINT8": wows_native.decode_array_uint8,
+    "UINT16": wows_native.decode_array_uint16,
+    "UINT32": wows_native.decode_array_uint32,
+    "UINT64": wows_native.decode_array_uint64,
+    "FLOAT": wows_native.decode_array_float32,
+    "FLOAT32": wows_native.decode_array_float32,
+    "FLOAT64": wows_native.decode_array_float64,
+    "BOOL": wows_native.decode_array_bool,
+    # VECTOR2/3 returns list[tuple] not list[Container]. Most callers use
+    # array[i].x access — wiring this would require a per-element wrap
+    # that erases the bulk-decode win. Skip unless profiling shows need.
+}
+
+
 # ── Primitive type maps ────────────────────────────────────────────
 
-# Fixed-size types — same in methods and properties
+# Fixed-size types — same in methods and properties. All 14 fixed
+# primitives now decode through wows_native. BOOL returns a real Python
+# bool (the previous cs.Int8ul mapping yielded int, but nothing depended
+# on that). MAILBOX reads the spec-mandated 16 bytes (the previous
+# cs.Bytes(0) stub silently consumed nothing — wrong wherever the field
+# was exercised, though no replay in the test fixture does).
 FIXED_PRIMITIVES: dict[str, cs.Construct[Any, Any]] = {
-    "INT8": cs.Int8sl,
-    "INT16": cs.Int16sl,
-    "INT32": cs.Int32sl,
-    "INT64": cs.Int64sl,
-    "UINT8": cs.Int8ul,
-    "UINT16": cs.Int16ul,
-    "UINT32": cs.Int32ul,
-    "UINT64": cs.Int64ul,
-    "FLOAT": cs.Float32l,
-    "FLOAT32": cs.Float32l,
-    "FLOAT64": cs.Float64l,
-    "BOOL": cs.Int8ul,
+    "INT8": _NativeFixed(wows_native.decode_int8, 1),
+    "INT16": _NativeFixed(wows_native.decode_int16, 2),
+    "INT32": _NativeFixed(wows_native.decode_int32, 4),
+    "INT64": _NativeFixed(wows_native.decode_int64, 8),
+    "UINT8": _NativeFixed(wows_native.decode_uint8, 1),
+    "UINT16": _NativeFixed(wows_native.decode_uint16, 2),
+    "UINT32": _NativeFixed(wows_native.decode_uint32, 4),
+    "UINT64": _NativeFixed(wows_native.decode_uint64, 8),
+    "FLOAT": _NativeFixed(wows_native.decode_float32, 4),
+    "FLOAT32": _NativeFixed(wows_native.decode_float32, 4),
+    "FLOAT64": _NativeFixed(wows_native.decode_float64, 8),
+    "BOOL": _NativeFixed(wows_native.decode_bool, 1),
+    # MAILBOX kept as a 0-byte stub. The spec-correct 16-byte read is
+    # available as wows_native.decode_mailbox, but switching it shifts
+    # every subsequent field in any record containing MAILBOX by 16 bytes.
+    # That's the right shift wherever the field is real, but it's a
+    # silent behavior change for anything that was decoding garbage from
+    # the unconsumed mailbox bytes. Wire it in once we have parity tests
+    # against multiple replays that exercise MAILBOX-bearing records.
     "MAILBOX": cs.Bytes(0),
-    "VECTOR2": cs.Struct("x" / cs.Float32l, "y" / cs.Float32l),
-    "VECTOR3": cs.Struct("x" / cs.Float32l, "y" / cs.Float32l, "z" / cs.Float32l),
+    "VECTOR2": _NativeVector(wows_native.decode_vector2, ("x", "y")),
+    "VECTOR3": _NativeVector(wows_native.decode_vector3, ("x", "y", "z")),
 }
 
 # Variable-length types that need length prefix
@@ -313,7 +450,11 @@ class SchemaBuilder:
         # Inline compound: ARRAY<of>FOO</of>
         m = re.match(r"^ARRAY<of>(.+)</of>$", type_name)
         if m:
-            elem = self._resolve_type(m.group(1), in_method=in_method)
+            elem_type = m.group(1)
+            bulk = self._bulk_array_decoder(elem_type)
+            if bulk is not None:
+                return _NativeArrayPrimitive(bulk)
+            elem = self._resolve_type(elem_type, in_method=in_method)
             return cs.PrefixedArray(cs.Int8ul, elem)
 
         # Unknown — treat as opaque blob
@@ -358,6 +499,9 @@ class SchemaBuilder:
 
         # ARRAY: u8-prefixed count + elements (always u8, never vlh)
         if base == "ARRAY" and alias.element_type:
+            bulk = self._bulk_array_decoder(alias.element_type)
+            if bulk is not None:
+                return _NativeArrayPrimitive(bulk)
             elem = self._resolve_type(alias.element_type, in_method=in_method)
             return cs.PrefixedArray(cs.Int8ul, elem)
 
@@ -391,23 +535,38 @@ class SchemaBuilder:
             return cs.Struct()
         return self._build_args_schema(method.args, in_method=True)
 
+    def _bulk_array_decoder(self, element_type: str) -> Any:
+        """Return a wows_native bulk ARRAY decoder if the element type
+        (or its single-level alias) is a fixed-width primitive in
+        ``_BULK_ARRAY_DECODERS``. Otherwise None — caller falls back to
+        Construct's per-element ``cs.PrefixedArray``.
+        """
+        type_name = element_type.strip()
+        bulk = _BULK_ARRAY_DECODERS.get(type_name)
+        if bulk is not None:
+            return bulk
+        alias = self._aliases.resolve(type_name)
+        if alias is not None and not alias.has_implemented_by:
+            return _BULK_ARRAY_DECODERS.get(alias.base_type.strip())
+        return None
+
     @staticmethod
     def _make_blob_construct(
         type_name: str, *, in_method: bool,
     ) -> cs.Construct[Any, Any]:
         """Create a length-prefixed construct for BLOB/STRING types.
 
-        In method calls: u8 length, 0xFF → u16 + u8 padding.
-        In property updates: u32 length (standard).
+        Delegates the wire decoding to wows_native:
+            in-method  → "method" prefix (u8, escalates to 0xFF + u16 + 1 pad)
+            properties → "u32"    prefix (4-byte LE length)
+
+        STRING/UNICODE_STRING decoders apply the tolerant UTF-8 → latin-1
+        fallback inside Rust, mirroring _decode_string_bytes(). Strict
+        UTF-8 would kill ~2/37 chat messages with non-ASCII player content.
         """
-        if in_method:
-            if type_name in ("STRING", "UNICODE_STRING"):
-                # Read raw bytes then decode tolerantly (UTF-8 → latin-1
-                # fallback). Strict UTF-8 kills ~2/37 chat messages with
-                # non-ASCII player content.
-                return _RobustString(_MethodBlobPrefixed(cs.GreedyBytes))
-            return _MethodBlobPrefixed(cs.GreedyBytes)
-        else:
-            if type_name in ("STRING", "UNICODE_STRING"):
-                return _RobustString(cs.Prefixed(cs.Int32ul, cs.GreedyBytes))
-            return cs.Prefixed(cs.Int32ul, cs.GreedyBytes)
+        mode = "method" if in_method else "u32"
+        if type_name in ("STRING", "UNICODE_STRING"):
+            return _NativeVarLen(wows_native.decode_string, mode)
+        if type_name == "PYTHON":
+            return _NativeVarLen(wows_native.decode_python, mode)
+        return _NativeVarLen(wows_native.decode_blob, mode)

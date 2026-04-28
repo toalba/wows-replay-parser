@@ -14,7 +14,11 @@ wows-gamedata/
 
 # Test fixtures — see tests/fixtures/README.md
 tests/fixtures/replays/*.wowsreplay
+tests/fixtures/gamedata
 tests/fixtures/gamedata/
+
+# Rust build artefacts (native/ extension)
+native/target/
 
 # mkdocs build output
 /site/

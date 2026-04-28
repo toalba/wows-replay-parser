@@ -497,12 +497,17 @@ class PacketDecoder:
                     k: v for k, v in parsed.items() if not k.startswith("_")
                 }
             except Exception:
-                log.debug(
-                    "Failed to parse method args: %s.%s",
-                    entity_type,
-                    method.name,
-                    exc_info=True,
-                )
+                # Hot path: 4600+ failures per replay (rate-limited by parsing
+                # gaps in nested types). exc_info=True triggers sys.exc_info()
+                # + LogRecord construction even when DEBUG is off — guard the
+                # whole call so the cost is paid only when someone's listening.
+                if log.isEnabledFor(logging.DEBUG):
+                    log.debug(
+                        "Failed to parse method args: %s.%s",
+                        entity_type,
+                        method.name,
+                        exc_info=True,
+                    )
 
     def _handle_property_update(self, packet: Packet) -> None:
         """

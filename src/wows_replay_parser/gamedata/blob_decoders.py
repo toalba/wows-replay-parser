@@ -82,8 +82,10 @@ def decode_blob(alias: TypeAlias, data: bytes) -> Any:
             log.debug("Failed to decode %s (%d bytes)", name, len(data) if data else 0, exc_info=True)
             return data
 
-    # No known decoder — log at DEBUG if this alias has an implementedBy
-    if alias.has_implemented_by:
+    # No known decoder — log at DEBUG if this alias has an implementedBy.
+    # Hot path: ~2300 calls per replay; guard with isEnabledFor to avoid
+    # LogRecord construction when DEBUG isn't configured.
+    if alias.has_implemented_by and log.isEnabledFor(logging.DEBUG):
         log.debug(
             "Unhandled implementedBy=%s alias=%s (%d bytes)",
             alias.implemented_by, name, len(data) if data else 0,

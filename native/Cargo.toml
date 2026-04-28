@@ -1,0 +1,26 @@
+[package]
+name = "wows-native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "wows_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true
+incremental = false
+
+# Local-host build profile: same as release but compiles for the exact CPU
+# that produced the wheel. Use via:
+#     RUSTFLAGS="-C target-cpu=native" maturin develop --profile release-native
+# Distribution wheels MUST use [profile.release], not this one.
+[profile.release-native]
+inherits = "release"
