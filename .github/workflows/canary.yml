@@ -1,6 +1,6 @@
 name: Canary (patch regression)
-# Nightly: run tests against latest wows-gamedata tag; open patch-regression
-# issue on failure, close it on recovery.
+# Nightly: run tests against latest wows-render-gamedata tag; open
+# patch-regression issue on failure, close it on recovery.
 
 on:
   schedule:
@@ -16,51 +16,32 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       gamedata_tag: ${{ steps.checkout-gamedata.outputs.tag }}
-      skipped: ${{ steps.secret-check.outputs.skipped }}
     steps:
       - uses: actions/checkout@v6
 
-      - name: Check GAMEDATA_PAT secret
-        id: secret-check
-        env:
-          GAMEDATA_PAT: ${{ secrets.GAMEDATA_PAT }}
-        run: |
-          if [ -z "$GAMEDATA_PAT" ]; then
-            echo "::warning::GAMEDATA_PAT secret not configured — skipping canary. See .github/SECRETS.md."
-            echo "skipped=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skipped=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Install uv
-        if: steps.secret-check.outputs.skipped != 'true'
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
       - name: Set up Python 3.12
-        if: steps.secret-check.outputs.skipped != 'true'
         run: uv python install 3.12
 
       - name: Install project
-        if: steps.secret-check.outputs.skipped != 'true'
         run: uv sync --all-extras
 
-      - name: Clone wows-gamedata at latest tag
+      - name: Clone wows-render-gamedata at latest tag
         id: checkout-gamedata
-        if: steps.secret-check.outputs.skipped != 'true'
-        env:
-          GAMEDATA_PAT: ${{ secrets.GAMEDATA_PAT }}
         run: |
           set -euo pipefail
           git clone --filter=blob:none --no-checkout \
-            "https://x-access-token:${GAMEDATA_PAT}@github.com/toalba/wows-gamedata.git" \
+            https://github.com/toalba/wows-render-gamedata.git \
             wows-gamedata
           cd wows-gamedata
-          # Pick the latest tag by commit date (tags look like v15.2.0.12267945).
+          # Pick the latest tag by commit date (tags look like v12267945).
           LATEST_TAG=$(git for-each-ref --sort=-creatordate --format='%(refname:short)' refs/tags | head -n1)
           if [ -z "$LATEST_TAG" ]; then
-            echo "::error::No tags found in wows-gamedata"
+            echo "::error::No tags found in wows-render-gamedata"
             exit 1
           fi
           git checkout "$LATEST_TAG"
@@ -69,7 +50,6 @@ jobs:
 
       - name: Run pytest
         id: pytest
-        if: steps.secret-check.outputs.skipped != 'true'
         env:
           GAMEDATA_PATH: ${{ github.workspace }}/wows-gamedata/data
         run: |
@@ -77,7 +57,7 @@ jobs:
           uv run pytest tests/ -v --tb=short 2>&1 | tee pytest-output.txt
 
       - name: Upload pytest output
-        if: always() && steps.secret-check.outputs.skipped != 'true'
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: pytest-output
@@ -86,7 +66,7 @@ jobs:
 
   report-failure:
     needs: canary-test
-    if: failure() && needs.canary-test.outputs.skipped != 'true'
+    if: failure()
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -126,7 +106,7 @@ jobs:
 
   close-on-recovery:
     needs: canary-test
-    if: success() && needs.canary-test.outputs.skipped != 'true'
+    if: success()
     runs-on: ubuntu-latest
     permissions:
       contents: read

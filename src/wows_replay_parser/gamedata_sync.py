@@ -14,12 +14,11 @@ from pathlib import Path  # noqa: TC003 — used at runtime in function signatur
 log = logging.getLogger(__name__)
 
 # Override via GAMEDATA_REPO_URL env var to point at your own mirror.
-# Default is a placeholder that won't resolve for public users — auto-sync
-# is a maintainer convenience; end users should extract gamedata from
-# their WoWs install and point GAMEDATA_PATH at it.
+# Default is the public wows-render-gamedata repo, which carries the entity
+# .def schemas + curated JSONs the parser needs (no decompiled WG sources).
 GAMEDATA_REPO_URL = os.environ.get(
     "GAMEDATA_REPO_URL",
-    "https://github.com/toalba/wows-gamedata.git",
+    "https://github.com/toalba/wows-render-gamedata.git",
 )
 
 
