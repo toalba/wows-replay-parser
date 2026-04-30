@@ -39,10 +39,13 @@ pip install "wows-replay-parser[cli]"
 The parser needs the game's entity definition files (`.def` + `alias.xml`)
 to build binary schemas at runtime.
 
-> **Note:** A sanitized public `wows-gamedata` repo is in preparation.
-> Until then, extract the relevant directories from your own World of
-> Warships installation (e.g. via `wowsunpack`) and point
-> `gamedata_path` at `…/scripts_entity/entity_defs`.
+Get them from the public [wows-render-gamedata](https://github.com/toalba/wows-render-gamedata) repo:
+
+```bash
+git clone https://github.com/toalba/wows-render-gamedata.git wows-gamedata
+```
+
+Then point `gamedata_path` at `./wows-gamedata/data/scripts_entity/entity_defs`. Tags follow `v<build_id>`; check out the tag matching your replay's WoWs build.
 
 
 ### Parse a replay
@@ -269,10 +272,10 @@ Packet header format (verified): `payload_size(u32 LE) + packet_type(u32 LE) + c
 
 ## Gamedata
 
-The parser reads entity definitions from [wows-gamedata](https://github.com/toalba/wows-gamedata), a companion repository with all game data automatically extracted and versioned.
+The parser reads entity definitions from [wows-render-gamedata](https://github.com/toalba/wows-render-gamedata), a public companion repository with the game-data subset needed at runtime.
 
 ```bash
-git clone https://github.com/toalba/wows-gamedata.git
+git clone https://github.com/toalba/wows-render-gamedata.git wows-gamedata
 ```
 
 Key paths used by the parser:
@@ -280,20 +283,15 @@ Key paths used by the parser:
 | Path | Contents |
 |---|---|
 | `data/scripts_entity/entity_defs/` | `.def` XML files (14 entities, 22 interfaces) + `alias.xml` |
-| `data/scripts_decrypted/extracted_constants.json` | ~39,000 constants (ribbon IDs, weapon types, death reasons) |
-| `data/spaces/<map_name>/minimap.png` | Minimap image per map |
 | `data/spaces/<map_name>/space.settings` | Map world bounds (minX/maxX/minY/maxY) |
 | `data/content/GameParams.data` | Ship stats and names (Blowfish-encrypted pickle) |
+| `data/projectiles.json` / `data/ship_consumables.json` / `data/arena_key_maps.json` | Curated enrichment data; parser falls back gracefully if absent |
 
-### Automated patch pipeline
+Tags follow `v<build_id>` (matching the WoWs client build). `gamedata_sync.sync_gamedata()` checks out the closest tag to a replay's game version automatically.
 
-The gamedata repository is maintained by a GitHub Actions pipeline running on a self-hosted runner with the game client installed:
+### Patch pipeline
 
-1. Every 6 hours, the pipeline compares the installed Steam build ID against the remote.
-2. On a new patch, it re-extracts all assets via `wowsunpack`, decrypts scripts, diffs against the previous version, and creates a tagged release.
-3. Enum shifts (inserted or removed enum members) are detected and flagged in `diff.json`.
-
-Because the parser derives all schemas from the `.def` files at runtime, no code changes are needed when WoWs updates — a `git pull` on the gamedata repo is sufficient.
+The repository is regenerated automatically by an upstream extraction pipeline whenever WoWs ships a new build. Because the parser derives all schemas from the `.def` files at runtime, no code changes are needed when WoWs updates — a `git pull` on the gamedata repo is sufficient.
 
 ---
 
