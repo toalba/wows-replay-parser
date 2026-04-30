@@ -18,3 +18,7 @@ tests/fixtures/gamedata/
 
 # mkdocs build output
 /site/
+
+# Rust cargo build output (native/target, etc.)
+target/
+**/target/
