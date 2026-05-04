@@ -265,3 +265,24 @@ Each phase ends green-tested. End-to-end benchmark recorded after phases 6
   test suite).
 - Construct dependency stays for tests / fallback only — production parsing
   has zero `cs.parse(...)` calls on the hot path.
+
+## Benchmark log
+
+10-run end-to-end `parse_replay()` on the 2.5 MB fixture (`20260322_172639_PHSC710-Prins-Van-Oranje_56_AngelWings.wowsreplay`), build: `RUSTFLAGS="-C target-cpu=native" maturin develop --profile release-native`.
+
+| Build | Min (ms) | Median (ms) | Mean ± stdev (ms) |
+|---|---|---|---|
+| Construct baseline (pre-port) | 4198 | 4448 | — |
+| All Rust primitives wired (Construct still in middle layer) | 4187 | 4377 | 4535 ± 440 |
+| + `_snapshot_value` primitive fast-path + `logging.debug` guards | 3731 | 4058 | 4152 ± 307 |
+| + bulk `ARRAY<primitive>` decoder | 3863 | 4224 | 4239 ± 270 |
+| **Full Rust executor (Path C)** | **3446** | **3781** | **3833 ± 303** |
+
+Net end-to-end median: 4448 → 3781 ms (**-15.0%**). Min: 4198 → 3446 ms (**-18.0%**).
+
+The executor's microbench gain (7-20× over Construct at the leaf) doesn't fully surface end-to-end because:
+1. `post_process` allocates a `cs.Container` for every dict in the result tree (one Python-level constructor call per nested object).
+2. State tracker and event-stream creation (~1.5 s combined) are Python-side work outside the schema path.
+3. Pickle deserialization (~0.3-0.5 s) is unchanged — it's stage-2 of the post-walk and was always Python.
+
+To unlock more, the next moves are: (a) replace `cs.Container` wrap with a lighter `__getattr__` dict subclass, freeing up the post-walk; (b) port `tracker._snapshot_value` fully into Rust on the state-tracker side; (c) batch pickle decoding by content-hash to amortize cost across duplicate BLOBs.
