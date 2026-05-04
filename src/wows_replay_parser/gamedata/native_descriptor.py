@@ -163,4 +163,18 @@ class NativeDescriptorBuilder:
                 "elements": [self.descriptor_for_type(t, in_method=in_method) for t in alias.tuple_types],
             }
 
+        # USER_TYPE: resolve via first field type or fall back to opaque blob.
+        # The wire encoding is identical to a plain BLOB — only Python-side
+        # deserialization differs (handled by post_process via __alias__ marker).
+        if base == "USER_TYPE":
+            if alias.fields:
+                _, field_type = alias.fields[0]
+                return self.descriptor_for_type(field_type, in_method=in_method)
+            return {"kind": "blob", "mode": "method" if in_method else "u32"}
+
+        # Recursive alias — base is itself an alias name (e.g. ENTITY_ID → INT32
+        # via a chain like MY_ID → ENTITY_ID → INT32).
+        if self._aliases.has(base):
+            return self.descriptor_for_type(base, in_method=in_method)
+
         raise NotImplementedError(f"alias {alias.name} (base {base}) not yet supported")

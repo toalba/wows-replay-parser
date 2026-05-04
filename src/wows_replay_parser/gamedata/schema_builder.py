@@ -27,7 +27,11 @@ import wows_native  # type: ignore[import-not-found]
 
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry, TypeAlias
 from wows_replay_parser.gamedata.blob_decoders import decode_blob, decode_pickle, decode_zipped
-from wows_replay_parser.gamedata.native_descriptor import post_process
+from wows_replay_parser.gamedata.native_descriptor import (
+    NativeDescriptorBuilder,
+    post_process,
+    set_alias_registry,
+)
 from wows_replay_parser.gamedata.def_loader import MethodDef
 from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 
@@ -273,6 +277,20 @@ class _NativeSchema:
         value, _ = wows_native.decode(self._handle, data, 0)
         return post_process(value)
 
+    def parse_stream(self, stream: Any) -> Any:
+        """Parse from a stream at its current position, advancing by consumed bytes.
+
+        Used by build_inline_property_schema (inline ENTITY_CREATE state parsing)
+        and build_schema_for_method_def (auto-detector trial parses), both of
+        which call schema.parse_stream(BytesIO) rather than schema.parse(bytes).
+        Requires a seekable stream — every replay stream is BytesIO-backed.
+        """
+        pos = stream.tell()
+        rest = stream.read()
+        value, consumed = wows_native.decode(self._handle, rest, 0)
+        stream.seek(pos + consumed)
+        return post_process(value)
+
 
 # Maps element type names to bulk wows_native ARRAY decoders. Element
 # types not in this dict fall through to cs.PrefixedArray with a
@@ -351,7 +369,7 @@ class SchemaBuilder:
 
     def build_method_schema(
         self, entity_name: str, method_index: int,
-    ) -> cs.Construct[Any, Any] | None:
+    ) -> _NativeSchema | None:
         """Build a schema for a specific client method's arguments."""
         key = (entity_name, method_index)
         cached = self._method_cache.get(key)
@@ -363,13 +381,24 @@ class SchemaBuilder:
         if method is None:
             self._method_cache[key] = None
             return None
-        result = self._build_args_schema(method.args, in_method=True)
+        builder = NativeDescriptorBuilder(self._aliases, self._entities)
+        descriptor = {
+            "kind": "fixed_dict",
+            "fields": [
+                {"name": arg_name if not arg_name.isdigit() else f"arg{arg_name}",
+                 "schema": builder.descriptor_for_type(arg_type, in_method=True)}
+                for arg_name, arg_type in method.args
+            ],
+        }
+        handle = wows_native.compile_schema(descriptor)
+        set_alias_registry(self._aliases)
+        result = _NativeSchema(handle)
         self._method_cache[key] = result
         return result
 
     def build_property_schema(
         self, entity_name: str, prop_index: int,
-    ) -> cs.Construct[Any, Any] | None:
+    ) -> _NativeSchema | None:
         """Build a schema for a specific property value.
 
         Properties use u32 prefix for BLOB/STRING (standard encoding).
@@ -384,13 +413,17 @@ class SchemaBuilder:
         if prop is None:
             self._property_cache[key] = None
             return None
-        result = self._resolve_type(prop.type_name, in_method=False)
+        builder = NativeDescriptorBuilder(self._aliases, self._entities)
+        descriptor = builder.descriptor_for_type(prop.type_name, in_method=False)
+        handle = wows_native.compile_schema(descriptor)
+        set_alias_registry(self._aliases)
+        result = _NativeSchema(handle)
         self._property_cache[key] = result
         return result
 
     def build_inline_property_schema(
         self, entity_name: str, prop_index: int,
-    ) -> cs.Construct[Any, Any] | None:
+    ) -> _NativeSchema | None:
         """Build a schema for an inline state property value.
 
         Inline state (EntityCreate) uses vlh encoding for variable-length
@@ -406,7 +439,11 @@ class SchemaBuilder:
         if prop is None:
             self._inline_property_cache[key] = None
             return None
-        result = self._resolve_type(prop.type_name, in_method=True)
+        builder = NativeDescriptorBuilder(self._aliases, self._entities)
+        descriptor = builder.descriptor_for_type(prop.type_name, in_method=True)
+        handle = wows_native.compile_schema(descriptor)
+        set_alias_registry(self._aliases)
+        result = _NativeSchema(handle)
         self._inline_property_cache[key] = result
         return result
 
@@ -544,14 +581,23 @@ class SchemaBuilder:
 
     def build_schema_for_method_def(
         self, method: MethodDef,
-    ) -> cs.Construct[Any, Any] | None:
+    ) -> _NativeSchema | None:
         """Build a schema for a MethodDef directly (bypasses index lookup).
 
         Used by the Tier 2 auto-detector for trial parsing candidate methods.
         """
-        if not method.args:
-            return cs.Struct()
-        return self._build_args_schema(method.args, in_method=True)
+        builder = NativeDescriptorBuilder(self._aliases, self._entities)
+        descriptor = {
+            "kind": "fixed_dict",
+            "fields": [
+                {"name": arg_name if not arg_name.isdigit() else f"arg{arg_name}",
+                 "schema": builder.descriptor_for_type(arg_type, in_method=True)}
+                for arg_name, arg_type in method.args
+            ],
+        }
+        handle = wows_native.compile_schema(descriptor)
+        set_alias_registry(self._aliases)
+        return _NativeSchema(handle)
 
     def _bulk_array_decoder(self, element_type: str) -> Any:
         """Return a wows_native bulk ARRAY decoder if the element type
