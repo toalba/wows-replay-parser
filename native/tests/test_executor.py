@@ -190,3 +190,57 @@ def test_decode_allow_none_wraps_fixed_dict(native):
     import struct
     data = b"\x01" + struct.pack("<I", 7)
     assert native.decode(h, data, 0) == ({"v": 7}, 5)
+
+
+def test_decode_array_uint16(native):
+    h = native.compile_schema({
+        "kind": "array",
+        "count_prefix": "uint8",
+        "element": {"kind": "uint16"},
+    })
+    data = bytes([3]) + struct.pack("<HHH", 1, 2, 3)
+    assert native.decode(h, data, 0) == ([1, 2, 3], 7)
+
+
+def test_decode_array_of_fixed_dict(native):
+    h = native.compile_schema({
+        "kind": "array",
+        "count_prefix": "uint8",
+        "element": {
+            "kind": "fixed_dict",
+            "fields": [
+                {"name": "x", "schema": {"kind": "float32"}},
+                {"name": "id", "schema": {"kind": "uint16"}},
+            ],
+        },
+    })
+    rec = lambda x, i: struct.pack("<fH", x, i)
+    data = bytes([2]) + rec(1.5, 10) + rec(-2.5, 20)
+    value, off = native.decode(h, data, 0)
+    assert value == [{"x": 1.5, "id": 10}, {"x": -2.5, "id": 20}]
+    assert off == 1 + 2 * 6
+
+
+def test_decode_array_empty(native):
+    h = native.compile_schema({
+        "kind": "array",
+        "count_prefix": "uint8",
+        "element": {"kind": "int32"},
+    })
+    assert native.decode(h, b"\x00", 0) == ([], 1)
+
+
+def test_decode_array_of_allow_none(native):
+    """Composability: array of AllowNone-wrapped values."""
+    h = native.compile_schema({
+        "kind": "array",
+        "count_prefix": "uint8",
+        "element": {
+            "kind": "allow_none",
+            "inner": {"kind": "uint32"},
+        },
+    })
+    data = bytes([3]) + b"\x01" + (10).to_bytes(4, "little") + b"\x00" + b"\x01" + (30).to_bytes(4, "little")
+    value, off = native.decode(h, data, 0)
+    assert value == [10, None, 30]
+    assert off == len(data)

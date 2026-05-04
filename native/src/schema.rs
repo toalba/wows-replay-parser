@@ -30,6 +30,7 @@ pub enum Schema {
     UnicodeStr(LengthMode),
     FixedDict { fields: Vec<(String, Schema)> },
     AllowNone(Box<Schema>),
+    Array { element: Box<Schema> },
 }
 
 #[pyclass(name = "Schema", module = "wows_native")]
@@ -102,6 +103,22 @@ pub fn schema_from_dict(d: &Bound<'_, PyDict>) -> Result<Schema, DecodeError> {
                 .map_err(|_| DecodeError::InvalidDescriptor("allow_none inner must be dict".into()))?;
             let inner = schema_from_dict(inner_dict)?;
             Ok(Schema::AllowNone(Box::new(inner)))
+        }
+        "array" => {
+            let count_prefix: String = d.get_item("count_prefix").ok().flatten()
+                .ok_or_else(|| DecodeError::InvalidDescriptor("array missing count_prefix".into()))?
+                .extract()
+                .map_err(|_| DecodeError::InvalidDescriptor("count_prefix must be string".into()))?;
+            if count_prefix != "uint8" {
+                return Err(DecodeError::InvalidDescriptor(
+                    format!("array count_prefix must be uint8, got {count_prefix:?}")));
+            }
+            let element_obj = d.get_item("element").ok().flatten()
+                .ok_or_else(|| DecodeError::InvalidDescriptor("array missing element".into()))?;
+            let element_dict = element_obj.downcast::<PyDict>()
+                .map_err(|_| DecodeError::InvalidDescriptor("array element must be dict".into()))?;
+            let element = schema_from_dict(element_dict)?;
+            Ok(Schema::Array { element: Box::new(element) })
         }
         other => Err(DecodeError::InvalidDescriptor(format!("unknown kind {other:?}"))),
     }

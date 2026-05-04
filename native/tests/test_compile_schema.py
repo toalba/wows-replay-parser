@@ -79,3 +79,37 @@ def test_compile_schema_allow_none(native):
 def test_compile_schema_allow_none_missing_inner_raises(native):
     with pytest.raises(ValueError, match="missing inner"):
         native.compile_schema({"kind": "allow_none"})
+
+
+def test_compile_schema_array(native):
+    handle = native.compile_schema({
+        "kind": "array",
+        "count_prefix": "uint8",
+        "element": {"kind": "int32"},
+    })
+    assert handle is not None
+
+
+def test_compile_schema_array_missing_count_prefix_raises(native):
+    with pytest.raises(ValueError, match="count_prefix"):
+        native.compile_schema({
+            "kind": "array",
+            "element": {"kind": "int32"},
+        })
+
+
+def test_compile_schema_array_unsupported_count_prefix_raises(native):
+    with pytest.raises(ValueError, match="uint8"):
+        native.compile_schema({
+            "kind": "array",
+            "count_prefix": "uint16",
+            "element": {"kind": "int32"},
+        })
+
+
+def test_compile_schema_array_missing_element_raises(native):
+    with pytest.raises(ValueError, match="missing element"):
+        native.compile_schema({
+            "kind": "array",
+            "count_prefix": "uint8",
+        })

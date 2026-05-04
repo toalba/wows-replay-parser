@@ -130,6 +130,17 @@ pub fn decode_value(schema: &Schema, buf: &[u8], offset: usize) -> Result<(Value
                 decode_value(inner, buf, offset + 1)
             }
         }
+        Schema::Array { element } => {
+            let count = slice_at(buf, offset, 1)?[0] as usize;
+            let mut cur = offset + 1;
+            let mut out = Vec::with_capacity(count);
+            for _ in 0..count {
+                let (v, new_off) = decode_value(element, buf, cur)?;
+                out.push(v);
+                cur = new_off;
+            }
+            Ok((Value::List(out), cur))
+        }
     }
 }
 
