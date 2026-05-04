@@ -112,6 +112,16 @@ pub fn decode_value(schema: &Schema, buf: &[u8], offset: usize) -> Result<(Value
             let payload = slice_at(buf, payload_start, length)?;
             Ok((Value::Str(decode_string_bytes(payload)), payload_start + length))
         }
+        Schema::FixedDict { fields } => {
+            let mut out = Vec::with_capacity(fields.len());
+            let mut cur = offset;
+            for (name, sub) in fields {
+                let (v, new_off) = decode_value(sub, buf, cur)?;
+                out.push((name.clone(), v));
+                cur = new_off;
+            }
+            Ok((Value::Dict(out), cur))
+        }
     }
 }
 

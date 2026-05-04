@@ -123,3 +123,40 @@ def test_decode_python_method_mode(native):
     h = native.compile_schema({"kind": "python", "mode": "method"})
     data = b"\x04\x80\x02ab"
     assert native.decode(h, data, 0) == (b"\x80\x02ab", 5)
+
+
+def test_decode_fixed_dict_primitives(native):
+    descriptor = {
+        "kind": "fixed_dict",
+        "fields": [
+            {"name": "x",  "schema": {"kind": "float32"}},
+            {"name": "y",  "schema": {"kind": "float32"}},
+            {"name": "id", "schema": {"kind": "uint16"}},
+        ],
+    }
+    handle = native.compile_schema(descriptor)
+    data = struct.pack("<ffH", 1.5, -2.5, 42)
+    value, off = native.decode(handle, data, 0)
+    assert value == {"x": 1.5, "y": -2.5, "id": 42}
+    assert off == 10
+
+
+def test_decode_fixed_dict_empty(native):
+    handle = native.compile_schema({"kind": "fixed_dict", "fields": []})
+    value, off = native.decode(handle, b"", 0)
+    assert value == {}
+    assert off == 0
+
+
+def test_decode_fixed_dict_offset(native):
+    """Decoding at a non-zero offset must consume only the right slice."""
+    descriptor = {
+        "kind": "fixed_dict",
+        "fields": [{"name": "v", "schema": {"kind": "uint32"}}],
+    }
+    handle = native.compile_schema(descriptor)
+    prefix = b"\xaa\xbb\xcc"
+    data = prefix + (42).to_bytes(4, "little") + b"\xff"
+    value, off = native.decode(handle, data, 3)
+    assert value == {"v": 42}
+    assert off == 7

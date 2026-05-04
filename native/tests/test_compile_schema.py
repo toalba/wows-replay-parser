@@ -52,3 +52,20 @@ def test_compile_schema_variable_missing_mode_raises(native, kind):
 def test_compile_schema_variable_unknown_mode_raises(native):
     with pytest.raises(ValueError, match="unknown mode"):
         native.compile_schema({"kind": "blob", "mode": "weird"})
+
+
+def test_compile_schema_fixed_dict_recursive(native):
+    """fixed_dict with primitive fields compiles cleanly."""
+    handle = native.compile_schema({
+        "kind": "fixed_dict",
+        "fields": [
+            {"name": "a", "schema": {"kind": "int32"}},
+            {"name": "b", "schema": {"kind": "string", "mode": "method"}},
+        ],
+    })
+    assert handle is not None
+
+
+def test_compile_schema_fixed_dict_missing_fields_raises(native):
+    with pytest.raises(ValueError, match="missing fields"):
+        native.compile_schema({"kind": "fixed_dict"})
