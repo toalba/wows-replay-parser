@@ -26,7 +26,7 @@ import construct as cs
 import wows_native  # type: ignore[import-not-found]
 
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry, TypeAlias
-from wows_replay_parser.gamedata.blob_decoders import decode_blob, decode_pickle, decode_zipped
+from wows_replay_parser.gamedata.blob_decoders import decode_blob
 from wows_replay_parser.gamedata.native_descriptor import (
     NativeDescriptorBuilder,
     post_process,
@@ -48,6 +48,9 @@ def _decode_string_bytes(raw: bytes) -> str:
     whole method's args. This helper tries UTF-8 first, falls back to
     latin-1 (never raises, 1:1 byte-to-codepoint), and strips NUL bytes
     so downstream consumers don't choke on embedded control chars.
+
+    Preserved for tests (test_chat.py); production string decoding uses
+    the wows_native Rust implementation.
     """
     if not isinstance(raw, (bytes, bytearray)):
         return raw  # type: ignore[return-value]
@@ -59,49 +62,6 @@ def _decode_string_bytes(raw: bytes) -> str:
     if "\x00" in text:
         text = text.replace("\x00", "")
     return text
-
-
-class _RobustString(cs.Construct):
-    """Wraps a bytes-producing construct and tolerantly decodes to str."""
-
-    def __init__(self, subcon: cs.Construct[Any, Any]) -> None:
-        super().__init__()
-        self.subcon = subcon
-        self.flagbuildnone = getattr(subcon, "flagbuildnone", False)
-
-    def _parse(self, stream: Any, context: Any, path: str) -> Any:
-        raw = self.subcon._parsereport(stream, context, path)
-        return _decode_string_bytes(raw)
-
-    def _sizeof(self, context: Any, path: str) -> int:
-        return self.subcon._sizeof(context, path)
-
-
-class _MethodBlobPrefixed(cs.Construct):
-    """Length-prefixed BLOB/STRING for method args.
-
-    Encoding: u8 length, if 0xFF → u16 length + 1 unknown byte.
-    """
-
-    def __init__(self, subcon: cs.Construct[Any, Any]) -> None:
-        super().__init__()
-        self.subcon = subcon
-        self.flagbuildnone = getattr(subcon, "flagbuildnone", False)
-
-    def _parse(self, stream: Any, context: Any, path: str) -> Any:
-        first = cs.stream_read(stream, 1, path)[0]
-        if first < 0xFF:
-            length = first
-        else:
-            length = int.from_bytes(cs.stream_read(stream, 2, path), "little")
-            _unknown = cs.stream_read(stream, 1, path)  # padding byte
-        data = cs.stream_read(stream, length, path)
-        if self.subcon is cs.GreedyBytes:
-            return data
-        return self.subcon.parse(data, **context)
-
-    def _sizeof(self, context: Any, path: str) -> int:
-        raise cs.SizeofError("MethodBlobPrefixed is variable size")
 
 
 class _AllowNone(cs.Construct):
@@ -136,27 +96,6 @@ class _DecodedBlob(cs.Construct):
 
     def _sizeof(self, context: Any, path: str) -> int:
         raise cs.SizeofError("DecodedBlob is variable size")
-
-
-class _AutoPickleBlob(cs.Construct):
-    """Wraps a raw BLOB and auto-decodes pickle if the data starts with
-    a pickle protocol header (0x80). Returns raw bytes otherwise."""
-
-    def __init__(self, subcon: cs.Construct) -> None:
-        super().__init__()
-        self.subcon = subcon
-
-    def _parse(self, stream: Any, context: Any, path: str) -> Any:
-        raw = self.subcon._parsereport(stream, context, path)
-        if isinstance(raw, bytes) and len(raw) >= 2:
-            if raw[0] == 0x80:
-                return decode_pickle(raw)
-            if raw[0] == 0x78:
-                return decode_zipped(raw)
-        return raw
-
-    def _sizeof(self, context: Any, path: str) -> int:
-        raise cs.SizeofError("AutoPickleBlob is variable size")
 
 
 # ── Native (Rust / pyo3) adapters ─────────────────────────────────
@@ -446,25 +385,6 @@ class SchemaBuilder:
         result = _NativeSchema(handle)
         self._inline_property_cache[key] = result
         return result
-
-    def _build_args_schema(
-        self, args: list[tuple[str, str]], *, in_method: bool,
-    ) -> cs.Construct[Any, Any]:
-        """Build a struct from a method's argument list."""
-        if not args:
-            return cs.Struct()
-
-        fields: list[cs.Construct[Any, Any]] = []
-        for arg_name, arg_type in args:
-            label = arg_name if not arg_name.isdigit() else f"arg{arg_name}"
-            con = self._resolve_type(arg_type, in_method=in_method)
-            # Wrap plain BLOB args with auto-pickle detection so any
-            # BLOB that happens to contain pickle data gets decoded
-            # automatically without needing explicit overrides.
-            if arg_type in ("BLOB", "PYTHON") and not isinstance(con, _DecodedBlob):
-                con = _AutoPickleBlob(con)
-            fields.append(label / con)
-        return cs.Struct(*fields)
 
     def _resolve_type(
         self, type_name: str, *, in_method: bool,

@@ -9,15 +9,9 @@ tolerantly (UTF-8 → latin-1 fallback) and strips NULs.
 
 from __future__ import annotations
 
-import construct as cs
-
 from wows_replay_parser.events.models import ChatEvent
 from wows_replay_parser.events.stream import _chat, _coerce_chat_str
-from wows_replay_parser.gamedata.schema_builder import (
-    _decode_string_bytes,
-    _MethodBlobPrefixed,
-    _RobustString,
-)
+from wows_replay_parser.gamedata.schema_builder import _decode_string_bytes
 from wows_replay_parser.packets.types import Packet, PacketType
 
 
@@ -60,27 +54,6 @@ class TestDecodeStringBytes:
 
     def test_empty_bytes(self) -> None:
         assert _decode_string_bytes(b"") == ""
-
-
-class TestRobustStringConstruct:
-    def test_parses_valid_utf8(self) -> None:
-        schema = _RobustString(_MethodBlobPrefixed(cs.GreedyBytes))
-        # u8 length=5 + bytes "hello"
-        data = bytes([5]) + b"hello"
-        assert schema.parse(data) == "hello"
-
-    def test_parses_invalid_utf8_without_raising(self) -> None:
-        schema = _RobustString(_MethodBlobPrefixed(cs.GreedyBytes))
-        # u8 length=4 + invalid UTF-8 bytes
-        data = bytes([4]) + b"\xff\xfe\xfd\xfc"
-        out = schema.parse(data)
-        assert isinstance(out, str)
-        assert len(out) == 4
-
-    def test_parses_empty_string(self) -> None:
-        schema = _RobustString(_MethodBlobPrefixed(cs.GreedyBytes))
-        data = bytes([0])
-        assert schema.parse(data) == ""
 
 
 class TestChatFactory:
