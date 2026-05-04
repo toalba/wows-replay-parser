@@ -14,7 +14,8 @@ pub enum Value {
     Tuple3(f32, f32, f32),
     Dict(Vec<(String, Value)>),
     List(Vec<Value>),
-    // markers added in later tasks
+    UserTypeMarker { alias: String, bytes: Vec<u8> },
+    AutoPickleMarker(Vec<u8>),
 }
 
 impl Value {
@@ -42,6 +43,18 @@ impl Value {
                     out.push(it.to_pyobject(py)?);
                 }
                 PyList::new_bound(py, out).into_py(py)
+            }
+            Value::UserTypeMarker { alias, bytes } => {
+                let d = PyDict::new_bound(py);
+                d.set_item("__alias__", alias)?;
+                d.set_item("__bytes__", pyo3::types::PyBytes::new_bound(py, bytes))?;
+                d.into_py(py)
+            }
+            Value::AutoPickleMarker(bytes) => {
+                let d = PyDict::new_bound(py);
+                d.set_item("__autopickle__", true)?;
+                d.set_item("__bytes__", pyo3::types::PyBytes::new_bound(py, bytes))?;
+                d.into_py(py)
             }
         })
     }

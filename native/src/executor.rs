@@ -141,6 +141,17 @@ pub fn decode_value(schema: &Schema, buf: &[u8], offset: usize) -> Result<(Value
             }
             Ok((Value::List(out), cur))
         }
+        Schema::UserType { alias, blob_mode } => {
+            let (length, payload_start) = read_length(*blob_mode, buf, offset)?;
+            let payload = slice_at(buf, payload_start, length)?;
+            Ok((Value::UserTypeMarker { alias: alias.clone(), bytes: payload.to_vec() },
+                payload_start + length))
+        }
+        Schema::AutoPickleBlob { blob_mode } => {
+            let (length, payload_start) = read_length(*blob_mode, buf, offset)?;
+            let payload = slice_at(buf, payload_start, length)?;
+            Ok((Value::AutoPickleMarker(payload.to_vec()), payload_start + length))
+        }
     }
 }
 

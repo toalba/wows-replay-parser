@@ -113,3 +113,28 @@ def test_compile_schema_array_missing_element_raises(native):
             "kind": "array",
             "count_prefix": "uint8",
         })
+
+
+def test_compile_schema_user_type(native):
+    handle = native.compile_schema({"kind": "user_type", "alias": "ZIPPED_BLOB", "blob_mode": "method"})
+    assert handle is not None
+
+
+def test_compile_schema_user_type_missing_alias_raises(native):
+    with pytest.raises(ValueError, match="missing alias"):
+        native.compile_schema({"kind": "user_type", "blob_mode": "method"})
+
+
+def test_compile_schema_user_type_missing_blob_mode_raises(native):
+    with pytest.raises(ValueError, match="missing blob_mode"):
+        native.compile_schema({"kind": "user_type", "alias": "X"})
+
+
+def test_compile_schema_auto_pickle_blob(native):
+    handle = native.compile_schema({"kind": "auto_pickle_blob", "blob_mode": "u32"})
+    assert handle is not None
+
+
+def test_compile_schema_auto_pickle_missing_blob_mode_raises(native):
+    with pytest.raises(ValueError, match="missing blob_mode"):
+        native.compile_schema({"kind": "auto_pickle_blob"})

@@ -244,3 +244,41 @@ def test_decode_array_of_allow_none(native):
     value, off = native.decode(h, data, 0)
     assert value == [10, None, 30]
     assert off == len(data)
+
+
+def test_decode_user_type_marker(native):
+    h = native.compile_schema({
+        "kind": "user_type",
+        "alias": "ZIPPED_BLOB",
+        "blob_mode": "method",
+    })
+    payload = b"hello"
+    data = bytes([len(payload)]) + payload
+    value, off = native.decode(h, data, 0)
+    assert value == {"__alias__": "ZIPPED_BLOB", "__bytes__": b"hello"}
+    assert off == 6
+
+
+def test_decode_user_type_marker_u32(native):
+    h = native.compile_schema({
+        "kind": "user_type",
+        "alias": "GAMEPARAMS",
+        "blob_mode": "u32",
+    })
+    payload = b"\x80\x02..."
+    data = (len(payload)).to_bytes(4, "little") + payload
+    value, off = native.decode(h, data, 0)
+    assert value == {"__alias__": "GAMEPARAMS", "__bytes__": payload}
+    assert off == 4 + len(payload)
+
+
+def test_decode_auto_pickle_marker(native):
+    h = native.compile_schema({
+        "kind": "auto_pickle_blob",
+        "blob_mode": "method",
+    })
+    payload = b"\x80\x02..."
+    data = bytes([len(payload)]) + payload
+    value, off = native.decode(h, data, 0)
+    assert value == {"__autopickle__": True, "__bytes__": payload}
+    assert off == 1 + len(payload)

@@ -31,6 +31,8 @@ pub enum Schema {
     FixedDict { fields: Vec<(String, Schema)> },
     AllowNone(Box<Schema>),
     Array { element: Box<Schema> },
+    UserType { alias: String, blob_mode: LengthMode },
+    AutoPickleBlob { blob_mode: LengthMode },
 }
 
 #[pyclass(name = "Schema", module = "wows_native")]
@@ -119,6 +121,24 @@ pub fn schema_from_dict(d: &Bound<'_, PyDict>) -> Result<Schema, DecodeError> {
                 .map_err(|_| DecodeError::InvalidDescriptor("array element must be dict".into()))?;
             let element = schema_from_dict(element_dict)?;
             Ok(Schema::Array { element: Box::new(element) })
+        }
+        "user_type" => {
+            let alias: String = d.get_item("alias").ok().flatten()
+                .ok_or_else(|| DecodeError::InvalidDescriptor("user_type missing alias".into()))?
+                .extract()
+                .map_err(|_| DecodeError::InvalidDescriptor("alias must be string".into()))?;
+            let mode_s: String = d.get_item("blob_mode").ok().flatten()
+                .ok_or_else(|| DecodeError::InvalidDescriptor("user_type missing blob_mode".into()))?
+                .extract()
+                .map_err(|_| DecodeError::InvalidDescriptor("blob_mode must be string".into()))?;
+            Ok(Schema::UserType { alias, blob_mode: LengthMode::parse(&mode_s)? })
+        }
+        "auto_pickle_blob" => {
+            let mode_s: String = d.get_item("blob_mode").ok().flatten()
+                .ok_or_else(|| DecodeError::InvalidDescriptor("auto_pickle_blob missing blob_mode".into()))?
+                .extract()
+                .map_err(|_| DecodeError::InvalidDescriptor("blob_mode must be string".into()))?;
+            Ok(Schema::AutoPickleBlob { blob_mode: LengthMode::parse(&mode_s)? })
         }
         other => Err(DecodeError::InvalidDescriptor(format!("unknown kind {other:?}"))),
     }
