@@ -2,13 +2,41 @@ use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
 use crate::error::DecodeError;
-use crate::schema::{PySchema, Schema};
+use crate::schema::{LengthMode, PySchema, Schema};
 use crate::value::Value;
 
 fn slice_at<'a>(buf: &'a [u8], offset: usize, size: usize) -> Result<&'a [u8], DecodeError> {
     buf.get(offset..offset + size).ok_or(DecodeError::BufferUnderrun {
         offset, need: size, have: buf.len(),
     })
+}
+
+fn read_length(mode: LengthMode, buf: &[u8], offset: usize) -> Result<(usize, usize), DecodeError> {
+    match mode {
+        LengthMode::Method => {
+            let first = slice_at(buf, offset, 1)?[0];
+            if first < 0xFF {
+                Ok((first as usize, offset + 1))
+            } else {
+                let len_bytes = slice_at(buf, offset + 1, 2)?;
+                let length = u16::from_le_bytes(len_bytes.try_into().unwrap()) as usize;
+                slice_at(buf, offset + 3, 1)?; // padding byte must exist
+                Ok((length, offset + 4))
+            }
+        }
+        LengthMode::U32 => {
+            let len_bytes = slice_at(buf, offset, 4)?;
+            Ok((u32::from_le_bytes(len_bytes.try_into().unwrap()) as usize, offset + 4))
+        }
+    }
+}
+
+fn decode_string_bytes(payload: &[u8]) -> String {
+    let text = match std::str::from_utf8(payload) {
+        Ok(s) => s.to_owned(),
+        Err(_) => payload.iter().map(|&b| b as char).collect(),
+    };
+    if text.contains('\0') { text.replace('\0', "") } else { text }
 }
 
 pub fn decode_value(schema: &Schema, buf: &[u8], offset: usize) -> Result<(Value, usize), DecodeError> {
@@ -73,6 +101,16 @@ pub fn decode_value(schema: &Schema, buf: &[u8], offset: usize) -> Result<(Value
             let y = f32::from_le_bytes(c[4..8].try_into().unwrap());
             let z = f32::from_le_bytes(c[8..12].try_into().unwrap());
             Ok((Value::Tuple3(x, y, z), offset + 12))
+        }
+        Schema::Blob(mode) | Schema::Python(mode) => {
+            let (length, payload_start) = read_length(*mode, buf, offset)?;
+            let payload = slice_at(buf, payload_start, length)?;
+            Ok((Value::Bytes(payload.to_vec()), payload_start + length))
+        }
+        Schema::Str(mode) | Schema::UnicodeStr(mode) => {
+            let (length, payload_start) = read_length(*mode, buf, offset)?;
+            let payload = slice_at(buf, payload_start, length)?;
+            Ok((Value::Str(decode_string_bytes(payload)), payload_start + length))
         }
     }
 }

@@ -34,3 +34,21 @@ def test_compile_schema_float_legacy_alias(native):
     """`float` is a legacy alias for `float32` (BigWorld FLOAT)."""
     handle = native.compile_schema({"kind": "float"})
     assert handle is not None
+
+
+@pytest.mark.parametrize("kind", ["blob", "python", "string", "unicode_string"])
+@pytest.mark.parametrize("mode", ["method", "u32"])
+def test_compile_schema_variable_primitive(native, kind, mode):
+    handle = native.compile_schema({"kind": kind, "mode": mode})
+    assert handle is not None
+
+
+@pytest.mark.parametrize("kind", ["blob", "python", "string", "unicode_string"])
+def test_compile_schema_variable_missing_mode_raises(native, kind):
+    with pytest.raises(ValueError, match="missing mode"):
+        native.compile_schema({"kind": kind})
+
+
+def test_compile_schema_variable_unknown_mode_raises(native):
+    with pytest.raises(ValueError, match="unknown mode"):
+        native.compile_schema({"kind": "blob", "mode": "weird"})
