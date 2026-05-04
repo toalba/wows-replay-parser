@@ -92,3 +92,94 @@ def test_descriptor_alias_implementedby_blob():
     assert b.descriptor_for_type("ZIPPED_BLOB", in_method=False) == {
         "kind": "user_type", "alias": "ZIPPED_BLOB", "blob_mode": "u32",
     }
+
+
+# ---------------------------------------------------------------------------
+# Task 13 — FIXED_DICT, ARRAY alias, AllowNone, TUPLE
+# ---------------------------------------------------------------------------
+
+def test_descriptor_fixed_dict():
+    alias = TypeAlias(
+        name="POS_PAIR", base_type="FIXED_DICT",
+        fields=[("x", "FLOAT32"), ("y", "FLOAT32")],
+    )
+    aliases = _make_registry(alias)
+    b = NativeDescriptorBuilder(aliases, EntityRegistry())
+    assert b.descriptor_for_type("POS_PAIR") == {
+        "kind": "fixed_dict",
+        "fields": [
+            {"name": "x", "schema": {"kind": "float32"}},
+            {"name": "y", "schema": {"kind": "float32"}},
+        ],
+    }
+
+
+def test_descriptor_fixed_dict_allow_none():
+    alias = TypeAlias(
+        name="NULL_POS", base_type="FIXED_DICT",
+        fields=[("x", "FLOAT32")], allow_none=True,
+    )
+    aliases = _make_registry(alias)
+    b = NativeDescriptorBuilder(aliases, EntityRegistry())
+    assert b.descriptor_for_type("NULL_POS") == {
+        "kind": "allow_none",
+        "inner": {
+            "kind": "fixed_dict",
+            "fields": [{"name": "x", "schema": {"kind": "float32"}}],
+        },
+    }
+
+
+def test_descriptor_array_alias():
+    alias = TypeAlias(name="POS_LIST", base_type="ARRAY", element_type="UINT32")
+    aliases = _make_registry(alias)
+    b = NativeDescriptorBuilder(aliases, EntityRegistry())
+    assert b.descriptor_for_type("POS_LIST") == {
+        "kind": "array",
+        "count_prefix": "uint8",
+        "element": {"kind": "uint32"},
+    }
+
+
+def test_descriptor_tuple_alias():
+    alias = TypeAlias(
+        name="ID_NAME_PAIR", base_type="TUPLE",
+        tuple_types=["INT32", "STRING"],
+    )
+    aliases = _make_registry(alias)
+    b = NativeDescriptorBuilder(aliases, EntityRegistry())
+    assert b.descriptor_for_type("ID_NAME_PAIR", in_method=True) == {
+        "kind": "tuple",
+        "elements": [
+            {"kind": "int32"},
+            {"kind": "string", "mode": "method"},
+        ],
+    }
+
+
+def test_descriptor_nested_fixed_dict():
+    """FIXED_DICT containing another FIXED_DICT — exercises recursion."""
+    inner = TypeAlias(
+        name="POSITION", base_type="FIXED_DICT",
+        fields=[("x", "FLOAT32"), ("y", "FLOAT32")],
+    )
+    outer = TypeAlias(
+        name="ENTITY", base_type="FIXED_DICT",
+        fields=[("id", "UINT32"), ("pos", "POSITION")],
+    )
+    aliases = _make_registry(inner, outer)
+    b = NativeDescriptorBuilder(aliases, EntityRegistry())
+    desc = b.descriptor_for_type("ENTITY")
+    assert desc == {
+        "kind": "fixed_dict",
+        "fields": [
+            {"name": "id", "schema": {"kind": "uint32"}},
+            {"name": "pos", "schema": {
+                "kind": "fixed_dict",
+                "fields": [
+                    {"name": "x", "schema": {"kind": "float32"}},
+                    {"name": "y", "schema": {"kind": "float32"}},
+                ],
+            }},
+        ],
+    }

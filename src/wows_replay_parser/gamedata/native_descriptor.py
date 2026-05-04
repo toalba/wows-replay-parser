@@ -81,5 +81,28 @@ class NativeDescriptorBuilder:
             return {"kind": _PRIMITIVE_KINDS[base]}
         if base in _VARIABLE_PRIMITIVES:
             return {"kind": _VARIABLE_KIND_MAP[base], "mode": "method" if in_method else "u32"}
-        # FIXED_DICT/ARRAY/TUPLE composites added in Task 13
+
+        if base == "FIXED_DICT":
+            inner = {
+                "kind": "fixed_dict",
+                "fields": [
+                    {"name": name, "schema": self.descriptor_for_type(t, in_method=in_method)}
+                    for name, t in alias.fields
+                ],
+            }
+            return {"kind": "allow_none", "inner": inner} if alias.allow_none else inner
+
+        if base == "ARRAY" and alias.element_type:
+            return {
+                "kind": "array",
+                "count_prefix": "uint8",
+                "element": self.descriptor_for_type(alias.element_type, in_method=in_method),
+            }
+
+        if base == "TUPLE" and alias.tuple_types:
+            return {
+                "kind": "tuple",
+                "elements": [self.descriptor_for_type(t, in_method=in_method) for t in alias.tuple_types],
+            }
+
         raise NotImplementedError(f"alias {alias.name} (base {base}) not yet supported")
