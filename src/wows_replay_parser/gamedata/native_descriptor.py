@@ -46,7 +46,40 @@ class NativeDescriptorBuilder:
         if type_name in _PRIMITIVE_KINDS:
             return {"kind": _PRIMITIVE_KINDS[type_name]}
         if type_name in _VARIABLE_PRIMITIVES:
-            mode = "method" if in_method else "u32"
-            return {"kind": _VARIABLE_KIND_MAP[type_name], "mode": mode}
-        # alias chain / composites added in Tasks 12 and 13
+            return {"kind": _VARIABLE_KIND_MAP[type_name], "mode": "method" if in_method else "u32"}
+
+        # Inline ARRAY<of>X</of>
+        m = re.match(r"^ARRAY<of>(.+)</of>$", type_name)
+        if m:
+            return {
+                "kind": "array",
+                "count_prefix": "uint8",
+                "element": self.descriptor_for_type(m.group(1), in_method=in_method),
+            }
+
+        # Alias resolution
+        alias = self._aliases.resolve(type_name)
+        if alias is not None:
+            return self._descriptor_for_alias(alias, in_method=in_method)
+
         raise NotImplementedError(f"descriptor for {type_name!r} not yet implemented")
+
+    def _descriptor_for_alias(self, alias: TypeAlias, *, in_method: bool) -> dict[str, Any]:
+        base = alias.base_type.strip()
+
+        # USER_TYPE with implementedBy → marker (variable types only).
+        # FIXED_DICT/ARRAY/TUPLE with implementedBy keep their normal struct
+        # layout on the wire — only the Python-side deserialization differs,
+        # which is handled by post_process via the stored alias.
+        if alias.has_implemented_by and base not in ("FIXED_DICT", "ARRAY", "TUPLE"):
+            return {
+                "kind": "user_type",
+                "alias": alias.name,
+                "blob_mode": "method" if in_method else "u32",
+            }
+        if base in _PRIMITIVE_KINDS:
+            return {"kind": _PRIMITIVE_KINDS[base]}
+        if base in _VARIABLE_PRIMITIVES:
+            return {"kind": _VARIABLE_KIND_MAP[base], "mode": "method" if in_method else "u32"}
+        # FIXED_DICT/ARRAY/TUPLE composites added in Task 13
+        raise NotImplementedError(f"alias {alias.name} (base {base}) not yet supported")

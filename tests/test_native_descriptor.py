@@ -5,9 +5,17 @@ from __future__ import annotations
 
 import pytest
 
-from wows_replay_parser.gamedata.alias_registry import AliasRegistry
+from wows_replay_parser.gamedata.alias_registry import AliasRegistry, TypeAlias
 from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 from wows_replay_parser.gamedata.native_descriptor import NativeDescriptorBuilder
+
+
+def _make_registry(*aliases: TypeAlias) -> AliasRegistry:
+    """Construct an AliasRegistry pre-loaded with the given TypeAlias objects."""
+    reg = AliasRegistry()
+    for alias in aliases:
+        reg._aliases[alias.name] = alias
+    return reg
 
 
 @pytest.fixture
@@ -43,3 +51,44 @@ def test_descriptor_for_variable_primitive(empty_registry, type_name, kind, in_m
     aliases, registry = empty_registry
     b = NativeDescriptorBuilder(aliases, registry)
     assert b.descriptor_for_type(type_name, in_method=in_method) == {"kind": kind, "mode": mode}
+
+
+# ---------------------------------------------------------------------------
+# Task 12 — Inline ARRAY + simple aliases + USER_TYPE
+# ---------------------------------------------------------------------------
+
+def test_descriptor_inline_array_uint16(empty_registry):
+    aliases, registry = empty_registry
+    b = NativeDescriptorBuilder(aliases, registry)
+    desc = b.descriptor_for_type("ARRAY<of>UINT16</of>", in_method=True)
+    assert desc == {
+        "kind": "array",
+        "count_prefix": "uint8",
+        "element": {"kind": "uint16"},
+    }
+
+
+def test_descriptor_alias_to_primitive():
+    """Single-level alias resolution: ENTITY_ID → INT32."""
+    alias = TypeAlias(name="ENTITY_ID", base_type="INT32")
+    aliases = _make_registry(alias)
+    b = NativeDescriptorBuilder(aliases, EntityRegistry())
+    assert b.descriptor_for_type("ENTITY_ID") == {"kind": "int32"}
+
+
+def test_descriptor_alias_implementedby_blob():
+    """USER_TYPE with implementedBy → marker."""
+    alias = TypeAlias(
+        name="ZIPPED_BLOB",
+        base_type="BLOB",
+        has_implemented_by=True,
+        implemented_by="ZippedBlobConverter.converter",
+    )
+    aliases = _make_registry(alias)
+    b = NativeDescriptorBuilder(aliases, EntityRegistry())
+    assert b.descriptor_for_type("ZIPPED_BLOB", in_method=True) == {
+        "kind": "user_type", "alias": "ZIPPED_BLOB", "blob_mode": "method",
+    }
+    assert b.descriptor_for_type("ZIPPED_BLOB", in_method=False) == {
+        "kind": "user_type", "alias": "ZIPPED_BLOB", "blob_mode": "u32",
+    }
