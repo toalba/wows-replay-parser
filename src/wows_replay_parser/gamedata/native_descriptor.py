@@ -9,8 +9,66 @@ from __future__ import annotations
 import re
 from typing import Any
 
+import construct as cs
+
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry, TypeAlias
+from wows_replay_parser.gamedata.blob_decoders import (
+    decode_blob,
+    decode_pickle,
+    decode_zipped,
+)
 from wows_replay_parser.gamedata.entity_registry import EntityRegistry
+
+# ── post_process global registry ──────────────────────────────────────────────
+
+_alias_registry: AliasRegistry | None = None
+
+
+def set_alias_registry(reg: AliasRegistry | None) -> None:
+    """Install the alias registry used by post_process for USER_TYPE markers."""
+    global _alias_registry
+    _alias_registry = reg
+
+
+def _lookup_alias(name: str) -> TypeAlias | None:
+    if _alias_registry is None:
+        return None
+    return _alias_registry.resolve(name)
+
+
+def post_process(value: Any) -> Any:
+    """Walk a Rust-decoded tree, convert USER_TYPE / auto_pickle markers,
+    wrap dicts in cs.Container.
+
+    Markers:
+      - {"__alias__": str, "__bytes__": bytes} → call decode_blob(alias, bytes)
+      - {"__autopickle__": True, "__bytes__": bytes} → sniff first byte:
+          0x80 → decode_pickle  /  0x78 → decode_zipped  /  else raw bytes
+    """
+    if isinstance(value, dict):
+        # USER_TYPE marker
+        alias_name = value.get("__alias__")
+        if alias_name is not None:
+            raw = value["__bytes__"]
+            alias = _lookup_alias(alias_name)
+            if alias is None:
+                return raw
+            decoded = decode_blob(alias, raw)
+            return post_process(decoded)
+        # auto_pickle marker
+        if value.get("__autopickle__"):
+            raw = value["__bytes__"]
+            if len(raw) >= 2:
+                if raw[0] == 0x80:
+                    return post_process(decode_pickle(raw))
+                if raw[0] == 0x78:
+                    return post_process(decode_zipped(raw))
+            return raw
+        # Plain dict — recurse + wrap
+        return cs.Container({k: post_process(v) for k, v in value.items()})
+    if isinstance(value, list):
+        return [post_process(v) for v in value]
+    return value
 
 _PRIMITIVE_KINDS = {
     "INT8": "int8", "INT16": "int16", "INT32": "int32", "INT64": "int64",

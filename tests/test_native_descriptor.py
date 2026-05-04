@@ -183,3 +183,116 @@ def test_descriptor_nested_fixed_dict():
             }},
         ],
     }
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — post_process (marker conversion + Container wrap)
+# ---------------------------------------------------------------------------
+
+import construct as cs
+
+from wows_replay_parser.gamedata import native_descriptor as nd
+from wows_replay_parser.gamedata.native_descriptor import (
+    post_process,
+    set_alias_registry,
+)
+
+
+def test_post_process_primitives():
+    assert post_process(42) == 42
+    assert post_process(3.14) == 3.14
+    assert post_process(b"x") == b"x"
+    assert post_process("hello") == "hello"
+    assert post_process(None) is None
+
+
+def test_post_process_dict_wraps_container():
+    out = post_process({"a": 1, "b": 2})
+    assert isinstance(out, cs.Container)
+    assert out.a == 1
+    assert out.b == 2
+
+
+def test_post_process_recursive():
+    out = post_process({"outer": {"inner": 7}, "list": [{"k": 9}]})
+    assert isinstance(out, cs.Container)
+    assert isinstance(out.outer, cs.Container)
+    assert out.outer.inner == 7
+    assert isinstance(out.list[0], cs.Container)
+    assert out.list[0].k == 9
+
+
+def test_post_process_user_type_marker(monkeypatch):
+    captured = {}
+    fake_alias = TypeAlias.__new__(TypeAlias)
+    fake_alias.name = "ZIPPED_BLOB"
+    fake_alias.base_type = "BLOB"
+    fake_alias.implemented_by = "X.converter"
+
+    def fake_decode_blob(alias, raw):
+        captured["alias"] = alias.name
+        return {"decoded": raw}
+
+    monkeypatch.setattr(nd, "_lookup_alias", lambda name: fake_alias if name == "ZIPPED_BLOB" else None)
+    monkeypatch.setattr(nd, "decode_blob", fake_decode_blob)
+
+    raw = {"__alias__": "ZIPPED_BLOB", "__bytes__": b"hello"}
+    out = post_process(raw)
+    assert captured["alias"] == "ZIPPED_BLOB"
+    assert isinstance(out, cs.Container)
+    assert out.decoded == b"hello"
+
+
+def test_post_process_unknown_alias_returns_raw_bytes(monkeypatch):
+    monkeypatch.setattr(nd, "_lookup_alias", lambda name: None)
+    raw = {"__alias__": "UNKNOWN", "__bytes__": b"raw"}
+    assert post_process(raw) == b"raw"
+
+
+def test_post_process_auto_pickle_marker_pickle_byte(monkeypatch):
+    captured = {}
+    def fake_decode_pickle(b):
+        captured["pickled"] = b
+        return {"unpickled": True}
+    monkeypatch.setattr(nd, "decode_pickle", fake_decode_pickle)
+
+    raw = {"__autopickle__": True, "__bytes__": b"\x80\x02something"}
+    out = post_process(raw)
+    assert captured["pickled"] == b"\x80\x02something"
+    assert isinstance(out, cs.Container)
+    assert out.unpickled is True
+
+
+def test_post_process_auto_pickle_marker_zlib_byte(monkeypatch):
+    captured = {}
+    def fake_decode_zipped(b):
+        captured["zipped"] = b
+        return {"unzipped": True}
+    monkeypatch.setattr(nd, "decode_zipped", fake_decode_zipped)
+
+    raw = {"__autopickle__": True, "__bytes__": b"\x78\x9csomething"}
+    out = post_process(raw)
+    assert captured["zipped"] == b"\x78\x9csomething"
+
+
+def test_post_process_auto_pickle_marker_unknown_byte():
+    raw = {"__autopickle__": True, "__bytes__": b"\x99plain"}
+    out = post_process(raw)
+    assert out == b"\x99plain"
+
+
+def test_set_alias_registry_lookup():
+    """The registry installed via set_alias_registry is used by _lookup_alias."""
+    fake_alias = TypeAlias.__new__(TypeAlias)
+    fake_alias.name = "X"
+
+    class FakeReg:
+        def resolve(self, name):
+            return fake_alias if name == "X" else None
+
+    set_alias_registry(FakeReg())
+    try:
+        assert nd._lookup_alias("X") is fake_alias
+        assert nd._lookup_alias("Y") is None
+    finally:
+        set_alias_registry(None)
