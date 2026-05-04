@@ -160,3 +160,33 @@ def test_decode_fixed_dict_offset(native):
     value, off = native.decode(handle, data, 3)
     assert value == {"v": 42}
     assert off == 7
+
+
+def test_decode_allow_none_present(native):
+    h = native.compile_schema({
+        "kind": "allow_none",
+        "inner": {"kind": "uint32"},
+    })
+    data = b"\x01" + (42).to_bytes(4, "little")
+    assert native.decode(h, data, 0) == (42, 5)
+
+
+def test_decode_allow_none_absent(native):
+    h = native.compile_schema({
+        "kind": "allow_none",
+        "inner": {"kind": "uint32"},
+    })
+    assert native.decode(h, b"\x00", 0) == (None, 1)
+
+
+def test_decode_allow_none_wraps_fixed_dict(native):
+    h = native.compile_schema({
+        "kind": "allow_none",
+        "inner": {
+            "kind": "fixed_dict",
+            "fields": [{"name": "v", "schema": {"kind": "uint32"}}],
+        },
+    })
+    import struct
+    data = b"\x01" + struct.pack("<I", 7)
+    assert native.decode(h, data, 0) == ({"v": 7}, 5)

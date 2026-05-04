@@ -29,6 +29,7 @@ pub enum Schema {
     Str(LengthMode),
     UnicodeStr(LengthMode),
     FixedDict { fields: Vec<(String, Schema)> },
+    AllowNone(Box<Schema>),
 }
 
 #[pyclass(name = "Schema", module = "wows_native")]
@@ -93,6 +94,14 @@ pub fn schema_from_dict(d: &Bound<'_, PyDict>) -> Result<Schema, DecodeError> {
                 out.push((name, sub));
             }
             Ok(Schema::FixedDict { fields: out })
+        }
+        "allow_none" => {
+            let inner_obj = d.get_item("inner").ok().flatten()
+                .ok_or_else(|| DecodeError::InvalidDescriptor("allow_none missing inner".into()))?;
+            let inner_dict = inner_obj.downcast::<PyDict>()
+                .map_err(|_| DecodeError::InvalidDescriptor("allow_none inner must be dict".into()))?;
+            let inner = schema_from_dict(inner_dict)?;
+            Ok(Schema::AllowNone(Box::new(inner)))
         }
         other => Err(DecodeError::InvalidDescriptor(format!("unknown kind {other:?}"))),
     }

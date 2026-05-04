@@ -122,6 +122,14 @@ pub fn decode_value(schema: &Schema, buf: &[u8], offset: usize) -> Result<(Value
             }
             Ok((Value::Dict(out), cur))
         }
+        Schema::AllowNone(inner) => {
+            let flag = slice_at(buf, offset, 1)?[0];
+            if flag == 0 {
+                Ok((Value::None, offset + 1))
+            } else {
+                decode_value(inner, buf, offset + 1)
+            }
+        }
     }
 }
 

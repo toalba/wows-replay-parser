@@ -69,3 +69,13 @@ def test_compile_schema_fixed_dict_recursive(native):
 def test_compile_schema_fixed_dict_missing_fields_raises(native):
     with pytest.raises(ValueError, match="missing fields"):
         native.compile_schema({"kind": "fixed_dict"})
+
+
+def test_compile_schema_allow_none(native):
+    handle = native.compile_schema({"kind": "allow_none", "inner": {"kind": "int32"}})
+    assert handle is not None
+
+
+def test_compile_schema_allow_none_missing_inner_raises(native):
+    with pytest.raises(ValueError, match="missing inner"):
+        native.compile_schema({"kind": "allow_none"})
