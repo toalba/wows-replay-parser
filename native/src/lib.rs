@@ -1,4 +1,5 @@
 mod error;
+mod schema;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -321,5 +322,7 @@ fn wows_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(decode_array_bool, m)?)?;
     m.add_function(wrap_pyfunction!(decode_array_vector2, m)?)?;
     m.add_function(wrap_pyfunction!(decode_array_vector3, m)?)?;
+    m.add_function(wrap_pyfunction!(schema::compile_schema, m)?)?;
+    m.add_class::<schema::PySchema>()?;
     Ok(())
 }
