@@ -277,6 +277,7 @@ Each phase ends green-tested. End-to-end benchmark recorded after phases 6
 | + `_snapshot_value` primitive fast-path + `logging.debug` guards | 3731 | 4058 | 4152 ± 307 |
 | + bulk `ARRAY<primitive>` decoder | 3863 | 4224 | 4239 ± 270 |
 | **Full Rust executor (Path C)** | **3446** | **3781** | **3833 ± 303** |
+| **Final (post-cleanup, Tasks 19-21)** | 3277 | 3867 | 3784 ± 315 |
 
 Net end-to-end median: 4448 → 3781 ms (**-15.0%**). Min: 4198 → 3446 ms (**-18.0%**).
 
