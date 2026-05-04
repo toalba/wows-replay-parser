@@ -33,6 +33,7 @@ pub enum Schema {
     Array { element: Box<Schema> },
     UserType { alias: String, blob_mode: LengthMode },
     AutoPickleBlob { blob_mode: LengthMode },
+    Tuple { elements: Vec<Schema> },
 }
 
 #[pyclass(name = "Schema", module = "wows_native")]
@@ -139,6 +140,19 @@ pub fn schema_from_dict(d: &Bound<'_, PyDict>) -> Result<Schema, DecodeError> {
                 .extract()
                 .map_err(|_| DecodeError::InvalidDescriptor("blob_mode must be string".into()))?;
             Ok(Schema::AutoPickleBlob { blob_mode: LengthMode::parse(&mode_s)? })
+        }
+        "tuple" => {
+            let elems_obj = d.get_item("elements").ok().flatten()
+                .ok_or_else(|| DecodeError::InvalidDescriptor("tuple missing elements".into()))?;
+            let elems_list = elems_obj.downcast::<PyList>()
+                .map_err(|_| DecodeError::InvalidDescriptor("tuple elements must be list".into()))?;
+            let mut out = Vec::with_capacity(elems_list.len());
+            for item in elems_list.iter() {
+                let item_dict = item.downcast::<PyDict>()
+                    .map_err(|_| DecodeError::InvalidDescriptor("tuple element must be dict".into()))?;
+                out.push(schema_from_dict(item_dict)?);
+            }
+            Ok(Schema::Tuple { elements: out })
         }
         other => Err(DecodeError::InvalidDescriptor(format!("unknown kind {other:?}"))),
     }

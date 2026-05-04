@@ -138,3 +138,13 @@ def test_compile_schema_auto_pickle_blob(native):
 def test_compile_schema_auto_pickle_missing_blob_mode_raises(native):
     with pytest.raises(ValueError, match="missing blob_mode"):
         native.compile_schema({"kind": "auto_pickle_blob"})
+
+
+def test_compile_schema_tuple(native):
+    h = native.compile_schema({"kind": "tuple", "elements": [{"kind": "int32"}]})
+    assert h is not None
+
+
+def test_compile_schema_tuple_missing_elements_raises(native):
+    with pytest.raises(ValueError, match="missing elements"):
+        native.compile_schema({"kind": "tuple"})

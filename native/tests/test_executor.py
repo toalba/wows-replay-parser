@@ -282,3 +282,33 @@ def test_decode_auto_pickle_marker(native):
     value, off = native.decode(h, data, 0)
     assert value == {"__autopickle__": True, "__bytes__": payload}
     assert off == 1 + len(payload)
+
+
+def test_decode_tuple(native):
+    h = native.compile_schema({
+        "kind": "tuple",
+        "elements": [{"kind": "int32"}, {"kind": "string", "mode": "method"}],
+    })
+    data = struct.pack("<i", 7) + b"\x03foo"
+    value, off = native.decode(h, data, 0)
+    assert value == [7, "foo"]
+    assert off == 8
+
+
+def test_decode_tuple_empty(native):
+    h = native.compile_schema({"kind": "tuple", "elements": []})
+    assert native.decode(h, b"", 0) == ([], 0)
+
+
+def test_decode_tuple_nested_fixed_dict(native):
+    h = native.compile_schema({
+        "kind": "tuple",
+        "elements": [
+            {"kind": "uint8"},
+            {"kind": "fixed_dict", "fields": [{"name": "x", "schema": {"kind": "uint16"}}]},
+        ],
+    })
+    data = b"\x05" + struct.pack("<H", 42)
+    value, off = native.decode(h, data, 0)
+    assert value == [5, {"x": 42}]
+    assert off == 3

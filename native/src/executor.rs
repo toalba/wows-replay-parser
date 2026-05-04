@@ -152,6 +152,16 @@ pub fn decode_value(schema: &Schema, buf: &[u8], offset: usize) -> Result<(Value
             let payload = slice_at(buf, payload_start, length)?;
             Ok((Value::AutoPickleMarker(payload.to_vec()), payload_start + length))
         }
+        Schema::Tuple { elements } => {
+            let mut out = Vec::with_capacity(elements.len());
+            let mut cur = offset;
+            for sub in elements {
+                let (v, new_off) = decode_value(sub, buf, cur)?;
+                out.push(v);
+                cur = new_off;
+            }
+            Ok((Value::List(out), cur))
+        }
     }
 }
 
