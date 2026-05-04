@@ -111,7 +111,7 @@ src/wows_replay_parser/
 2. → `AliasRegistry.from_file()` resolves type aliases
 3. → `DefLoader.load_all()` parses .def XML into `EntityDef` structs (with interface merging)
 4. → `EntityRegistry` indexes entities, methods, properties (sorted by sort_size)
-5. → `SchemaBuilder` creates `construct` binary parsers on-the-fly
+5. → `SchemaBuilder` produces `wows_native.Schema` handles compiled from descriptor dicts emitted by `NativeDescriptorBuilder`. The Rust executor in `wows_native` walks these handles to decode method args, property values, and inline ENTITY_CREATE state in a single FFI hop per record. A Python `post_process` sweep wraps result dicts in `cs.Container` (preserving `.field` attribute access) and converts USER_TYPE / auto-pickle markers via `gamedata/blob_decoders.py`.
 6. **Replay file** (.wowsreplay)
 7. → `ReplayReader.read()` extracts JSON headers + Blowfish decrypts + zlib decompresses
 8. → `type_id_detector.detect_type_id_mapping()` auto-maps type indices to entity names
@@ -269,10 +269,7 @@ Critical detail: types with an `<implementedBy>` tag → `streamSize() = -1`
 (variable) regardless of field contents. `compute_type_sort_size()` handles this
 via `TypeAlias.has_implemented_by`. 16 types in `alias.xml` carry this tag.
 
-The **auto-detector** (`method_id_detector.py`) is still enabled by default but
-is now redundant for Avatar and Vehicle. It may still help with Account entity
-tie groups (lobby/pre-battle methods) where the declaration order has not been
-verified.
+The **auto-detector** (`method_id_detector.py`) defaults to `False` — the deterministic ordering covers Avatar and Vehicle completely. It is opt-in for Account entity tie groups (lobby/pre-battle methods) where the declaration order has not been verified against real replays.
 
 ### Base Player Entity Type
 
