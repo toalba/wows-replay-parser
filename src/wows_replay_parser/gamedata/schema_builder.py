@@ -27,6 +27,7 @@ import wows_native  # type: ignore[import-not-found]
 
 from wows_replay_parser.gamedata.alias_registry import AliasRegistry, TypeAlias
 from wows_replay_parser.gamedata.blob_decoders import decode_blob, decode_pickle, decode_zipped
+from wows_replay_parser.gamedata.native_descriptor import post_process
 from wows_replay_parser.gamedata.def_loader import MethodDef
 from wows_replay_parser.gamedata.entity_registry import EntityRegistry
 
@@ -254,6 +255,23 @@ class _NativeArrayPrimitive(cs.Construct):
 
     def _sizeof(self, context: Any, path: str) -> int:
         raise cs.SizeofError("native array is variable size")
+
+
+class _NativeSchema:
+    """Drop-in replacement for a Construct schema that delegates to the
+    Rust executor in wows_native.
+
+    Used by SchemaBuilder once Tasks 16-18 wire the production paths
+    (build_method_schema / build_property_schema / inline state) through
+    this class.
+    """
+
+    def __init__(self, handle: Any) -> None:
+        self._handle = handle
+
+    def parse(self, data: bytes) -> Any:
+        value, _ = wows_native.decode(self._handle, data, 0)
+        return post_process(value)
 
 
 # Maps element type names to bulk wows_native ARRAY decoders. Element

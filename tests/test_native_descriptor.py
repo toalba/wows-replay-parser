@@ -296,3 +296,45 @@ def test_set_alias_registry_lookup():
         assert nd._lookup_alias("Y") is None
     finally:
         set_alias_registry(None)
+
+
+# ---------------------------------------------------------------------------
+# Task 15 — _NativeSchema parse-compatible wrapper
+# ---------------------------------------------------------------------------
+
+def test_native_schema_parse_int32():
+    from wows_replay_parser.gamedata.schema_builder import _NativeSchema
+    import wows_native, struct
+    handle = wows_native.compile_schema({"kind": "int32"})
+    sch = _NativeSchema(handle)
+    assert sch.parse(struct.pack("<i", -7)) == -7
+
+
+def test_native_schema_parse_fixed_dict_returns_container():
+    from wows_replay_parser.gamedata.schema_builder import _NativeSchema
+    import wows_native, struct
+    handle = wows_native.compile_schema({
+        "kind": "fixed_dict",
+        "fields": [
+            {"name": "x", "schema": {"kind": "float32"}},
+            {"name": "id", "schema": {"kind": "uint16"}},
+        ],
+    })
+    sch = _NativeSchema(handle)
+    out = sch.parse(struct.pack("<fH", 1.5, 42))
+    assert isinstance(out, cs.Container)
+    assert out.x == 1.5
+    assert out.id == 42
+
+
+def test_native_schema_parse_array():
+    from wows_replay_parser.gamedata.schema_builder import _NativeSchema
+    import wows_native, struct
+    handle = wows_native.compile_schema({
+        "kind": "array",
+        "count_prefix": "uint8",
+        "element": {"kind": "uint16"},
+    })
+    sch = _NativeSchema(handle)
+    out = sch.parse(bytes([3]) + struct.pack("<HHH", 10, 20, 30))
+    assert out == [10, 20, 30]
