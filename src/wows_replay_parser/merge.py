@@ -35,7 +35,8 @@ from __future__ import annotations
 
 import logging
 import warnings
-from dataclasses import dataclass, field
+from collections import defaultdict
+from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import TYPE_CHECKING, TypeVar
 
@@ -71,6 +72,51 @@ _T = TypeVar("_T")
 #: headroom below ``2**31`` (signed int32 max) and well above any real
 #: BigWorld entity id we've observed.
 B_ID_OFFSET: int = 1 << 30
+
+#: After aligning the two replays' clocks (by their battle-start offset), a
+#: server-broadcast event recorded by both perspectives lands within a few
+#: tens of milliseconds. Real paired replays show a residual up to ~42ms;
+#: 0.25s gives a comfortable margin while staying well below the spacing of
+#: genuinely distinct same-identity events.
+_EVENT_DEDUP_TOLERANCE_S: float = 0.25
+
+
+def _event_id_key(event: GameEvent) -> tuple | None:
+    """Server-unique identity for an event, or ``None`` if it has none.
+
+    Some server-broadcast events carry an id that is globally unique within a
+    match and identical across both client replays — a ``shot_id`` for shells
+    and torpedoes, the ``victim_id`` for a death (a ship dies exactly once).
+    Each client records the SAME object, but at a DIFFERENT time: the shooter
+    logs a torpedo at launch while a distant client logs it only on detection,
+    seconds later — so these cannot be matched by timestamp. They are deduped
+    by id, keeping the earliest copy (closest to the true launch/event).
+    """
+    name = type(event).__name__
+    if name in ("ShotCreatedEvent", "ShotDestroyedEvent", "TorpedoCreatedEvent"):
+        return (name, event.owner_id, event.shot_id)
+    if name == "DeathEvent":
+        return (name, event.victim_id)
+    return None
+
+
+def _event_content_key(event: GameEvent) -> tuple | None:
+    """Content key for an id-less server-broadcast event, or ``None``.
+
+    ``DamageEvent`` and ``ConsumableEvent`` carry no server-unique id, but both
+    clients receive the same broadcast — offset only by the battle-start clock
+    difference. Once that offset is removed, duplicates are identified by their
+    canonical fields (NOT ``raw_data``, whose payload differs per client) and
+    matched 1:1 within a small time tolerance.
+    """
+    name = type(event).__name__
+    if name == "DamageEvent":
+        return (name, event.target_id, event.attacker_id,
+                round(event.damage, 2), event.ammo_id)
+    if name == "ConsumableEvent":
+        return (name, event.vehicle_id, event.consumable_id,
+                event.consumable_type, round(event.work_time_left, 1))
+    return None
 
 
 def _ship_richness(ship: ShipState) -> tuple[int, float]:
@@ -675,23 +721,70 @@ def merge_replays(
     # Match entities between replays
     entity_map = match_entities(replay_a, replay_b)
 
-    # Merge event streams by timestamp
-    merged: list[GameEvent] = []
-    i, j = 0, 0
+    # Merge event streams. Each replay's clock starts at its own
+    # battle_start_time, so the same server-broadcast event lands at a
+    # different raw timestamp in each perspective. Align replay_b onto
+    # replay_a's clock by the battle-start offset, then drop duplicates that
+    # both clients received. The result is the union with the overlap deduped
+    # — more complete than either perspective alone, never double-counted.
     events_a = replay_a.events
     events_b = replay_b.events
 
-    while i < len(events_a) and j < len(events_b):
-        if events_a[i].timestamp <= events_b[j].timestamp:
-            merged.append(events_a[i])
-            i += 1
-        else:
-            merged.append(events_b[j])
-            j += 1
+    bs_a = replay_a.battle_start_time
+    bs_b = replay_b.battle_start_time
+    shift = (bs_a - bs_b) if (bs_a is not None and bs_b is not None) else 0.0
+    shifted_b = [
+        (replace(ev, timestamp=ev.timestamp + shift) if shift else ev)
+        for ev in events_b
+    ]
 
-    # Append remaining
-    merged.extend(events_a[i:])
-    merged.extend(events_b[j:])
+    # Phase 1 — id-keyed events (shots/torps/deaths): the same server object
+    # seen by both clients, possibly seconds apart (launch vs detection). Dedup
+    # globally by id, keeping the earliest copy.
+    id_best: dict[tuple, GameEvent] = {}
+    non_id_a: list[GameEvent] = []
+    non_id_b: list[GameEvent] = []
+    for ev in events_a:
+        key = _event_id_key(ev)
+        if key is None:
+            non_id_a.append(ev)
+        elif key not in id_best or ev.timestamp < id_best[key].timestamp:
+            id_best[key] = ev
+    for ev in shifted_b:
+        key = _event_id_key(ev)
+        if key is None:
+            non_id_b.append(ev)
+        elif key not in id_best or ev.timestamp < id_best[key].timestamp:
+            id_best[key] = ev
+
+    # Phase 2 — content-keyed events (damage): no id, so match replay_b copies
+    # 1:1 against the nearest unmatched replay_a copy within tolerance. Cross-
+    # stream only, so genuinely repeated identical events are never collapsed.
+    a_by_content: dict[tuple, list[list]] = defaultdict(list)
+    for ev in non_id_a:
+        ckey = _event_content_key(ev)
+        if ckey is not None:
+            a_by_content[ckey].append([ev.timestamp, False])
+
+    merged: list[GameEvent] = list(non_id_a)
+    for ev in non_id_b:
+        ckey = _event_content_key(ev)
+        if ckey is not None:
+            best_slot = None
+            best_delta = _EVENT_DEDUP_TOLERANCE_S
+            for slot in a_by_content.get(ckey, ()):
+                if slot[1]:
+                    continue
+                delta = abs(slot[0] - ev.timestamp)
+                if delta <= best_delta:
+                    best_slot, best_delta = slot, delta
+            if best_slot is not None:
+                best_slot[1] = True  # this replay_b event is the duplicate
+                continue
+        merged.append(ev)
+
+    merged.extend(id_best.values())
+    merged.sort(key=lambda e: e.timestamp)
 
     result = MergedReplay(
         replay_a=replay_a,

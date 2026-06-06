@@ -16,7 +16,14 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from wows_replay_parser.events.models import GameEvent
+from wows_replay_parser.events.models import (
+    ConsumableEvent,
+    DamageEvent,
+    DeathEvent,
+    GameEvent,
+    ShotCreatedEvent,
+    TorpedoCreatedEvent,
+)
 from wows_replay_parser.interfaces import ReplaySource
 from wows_replay_parser.merge import merge_replays
 from wows_replay_parser.state.models import (
@@ -262,6 +269,120 @@ def test_events_of_type_filters_merged_stream() -> None:
     assert all(isinstance(e, EventB) for e in only_b)
     assert len(only_a) == 2
     assert len(only_b) == 2
+
+
+def test_duplicate_server_events_deduped_after_clock_alignment() -> None:
+    """A server-broadcast event recorded by both perspectives appears once.
+
+    Both clients receive the same damage/death packets, but each replay's
+    clock starts at its own ``battle_start_time`` — so the duplicate lands at
+    a different raw timestamp in each. The merge must align the two clocks
+    (by the battle-start offset) and drop the duplicate. Modelled on real
+    paired replays where the offset was ~0.57s.
+    """
+    # B's battle starts 0.5s after A's → B's copy of each event is +0.5s.
+    a = StubReplay(
+        battle_start_time=5.0,
+        events=[
+            DamageEvent(timestamp=10.0, entity_id=100, target_id=100,
+                        attacker_id=200, damage=1000.0),
+            DeathEvent(timestamp=20.0, entity_id=100, victim_id=100,
+                       killer_id=200),
+        ],
+    )
+    b = StubReplay(
+        battle_start_time=5.5,
+        events=[
+            DamageEvent(timestamp=10.5, entity_id=100, target_id=100,
+                        attacker_id=200, damage=1000.0),
+            DeathEvent(timestamp=20.5, entity_id=100, victim_id=100,
+                       killer_id=200),
+        ],
+    )
+
+    merged = merge_replays(a, b)
+
+    assert len(merged.events_of_type(DamageEvent)) == 1
+    assert len(merged.events_of_type(DeathEvent)) == 1
+
+
+def test_perspective_unique_events_preserved() -> None:
+    """Events only one perspective witnessed (vision gaps) are kept.
+
+    The merged view is the *union* with the shared overlap deduped — strictly
+    more complete than either perspective alone, never double-counted.
+    """
+    a = StubReplay(
+        battle_start_time=5.0,
+        events=[
+            DamageEvent(timestamp=10.0, entity_id=100, target_id=100,
+                        attacker_id=200, damage=1000.0),  # shared
+            DamageEvent(timestamp=12.0, entity_id=100, target_id=100,
+                        attacker_id=200, damage=500.0),   # A-only
+        ],
+    )
+    b = StubReplay(
+        battle_start_time=5.5,
+        events=[
+            DamageEvent(timestamp=10.5, entity_id=100, target_id=100,
+                        attacker_id=200, damage=1000.0),  # dup of shared
+            DamageEvent(timestamp=15.5, entity_id=300, target_id=300,
+                        attacker_id=200, damage=700.0),    # B-only
+        ],
+    )
+
+    merged = merge_replays(a, b)
+
+    dmg = merged.events_of_type(DamageEvent)
+    assert sorted(e.damage for e in dmg) == [500.0, 700.0, 1000.0]
+
+
+def test_projectiles_deduped_by_shot_id_keeping_earliest() -> None:
+    """A shell/torpedo is one server object (``shot_id``) that both clients
+    record — but at different times (the shooter logs the launch; a distant
+    client logs it only on detection, seconds later). Dedup by id and keep the
+    earliest copy so the projectile animates from its true launch, not from
+    where some observer first noticed it.
+    """
+    a = StubReplay(events=[
+        TorpedoCreatedEvent(timestamp=50.0, shot_id=7, owner_id=200),  # detected late
+        ShotCreatedEvent(timestamp=30.0, shot_id=3, owner_id=200),
+    ])
+    b = StubReplay(events=[
+        TorpedoCreatedEvent(timestamp=46.0, shot_id=7, owner_id=200),  # launch
+        ShotCreatedEvent(timestamp=29.5, shot_id=3, owner_id=200),
+    ])
+
+    merged = merge_replays(a, b)
+
+    torps = merged.events_of_type(TorpedoCreatedEvent)
+    shots = merged.events_of_type(ShotCreatedEvent)
+    assert len(torps) == 1
+    assert torps[0].timestamp == 46.0
+    assert len(shots) == 1
+    assert shots[0].timestamp == 29.5
+
+
+def test_consumable_activations_deduped() -> None:
+    """A consumable activation is broadcast to both clients, so the same use
+    appears in both replays (clock-offset). Dedup it, but keep a later distinct
+    activation by the same ship.
+    """
+    a = StubReplay(battle_start_time=5.0, events=[
+        ConsumableEvent(timestamp=10.0, entity_id=100, vehicle_id=100,
+                        work_time_left=135.0),  # shared
+        ConsumableEvent(timestamp=20.0, entity_id=100, vehicle_id=100,
+                        work_time_left=135.0),  # later re-use, kept
+    ])
+    b = StubReplay(battle_start_time=5.5, events=[
+        ConsumableEvent(timestamp=10.5, entity_id=100, vehicle_id=100,
+                        work_time_left=135.0),  # dup of shared
+    ])
+
+    merged = merge_replays(a, b)
+
+    cons = merged.events_of_type(ConsumableEvent)
+    assert sorted(round(e.timestamp, 1) for e in cons) == [10.0, 20.0]
 
 
 # ─────────────────────────── state iteration ───────────────────────────
