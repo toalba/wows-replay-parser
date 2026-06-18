@@ -4,6 +4,21 @@ All notable changes to `wows-replay-parser` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+- **Arena roster crash on patch 15.5 (build 12668706)** — `onArenaStateReceived`
+  decoding crashed with `TypeError: int() argument must be a string, a
+  bytes-like object or a real number, not 'list'` while building the roster.
+  The wows-gamedata pipeline changed `arena_key_maps.json` to a *server-side*
+  group schema: `player_keys` became the 7-field `COMMON_DATA` group (missing
+  `shipId`/`name`/…) and `bot_keys` concatenated groups with duplicate field
+  names (`accountDBID`, `clanID`, …). `_load_key_maps` sorted and indexed those
+  blindly, shifting every field — `clanID` landed on the list-typed
+  `crewParams`. The client wire format is unchanged (players still 38 fields,
+  bots 28, alphabetical), so `_load_key_maps` now validates the JSON (rejecting
+  duplicate names and maps missing sentinel fields) and falls back to the
+  hardcoded maps when it isn't a usable client wire map. Also fixes the
+  field-misalignment behind the "wrong names on ships" roster bug on 15.5.
+
 ## [0.1.2] — 2026-04-27
 
 ### Fixed

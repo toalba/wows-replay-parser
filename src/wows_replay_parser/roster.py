@@ -29,6 +29,34 @@ log = logging.getLogger(__name__)
 # Primary source: data/arena_key_maps.json (extracted from game bytecode
 # by the wows-gamedata pipeline). Fallback: hardcoded maps below.
 
+# Fields the matcher relies on — used to validate that a JSON-derived key
+# list actually describes the client `onArenaStateReceived` wire record.
+_REQUIRED_ARENA_FIELDS = frozenset({"id", "accountDBID", "name", "teamId", "shipId"})
+
+
+def _is_valid_wire_map(keys: list[str]) -> bool:
+    """Whether *keys* is a usable client wire key list.
+
+    The client `onArenaStateReceived` pickle serializes a *flat, deduplicated*
+    set of fields in alphabetical order. Two failure modes seen in the wild:
+
+    * duplicate field names — the build-12668706 (patch 15.5) gamedata pipeline
+      switched ``arena_key_maps.json`` to a *server-side* group schema where
+      ``bot_keys`` concatenates groups and repeats ``accountDBID``/``clanID``/etc.
+      Duplicates corrupt the index→name map (a later dup overwrites an earlier
+      field, shifting every value), so reject them outright.
+    * missing sentinels — that same schema exposes ``player_keys`` as the 7-field
+      ``COMMON_DATA`` group, which lacks ``shipId`` and friends. Without those
+      the roster can't be matched at all.
+
+    Either case means the JSON isn't the client wire layout; the caller should
+    fall back to the hardcoded maps.
+    """
+    if len(keys) != len(set(keys)):
+        return False
+    return _REQUIRED_ARENA_FIELDS.issubset(keys)
+
+
 def _load_key_maps(
     gamedata_path: Path | None,
 ) -> tuple[dict[int, str], dict[int, str]]:
@@ -36,6 +64,10 @@ def _load_key_maps(
 
     The JSON contains unordered field lists (extracted from Python sets).
     The game serializes in alphabetical order, so we sort before indexing.
+
+    The JSON is only trusted when it validates as a client wire map (see
+    ``_is_valid_wire_map``); newer gamedata ships a server-side group schema
+    under the same filename that would silently misalign the roster.
     """
     if gamedata_path is not None:
         # gamedata_path is entity_defs/, JSON is at ../../arena_key_maps.json
@@ -46,13 +78,21 @@ def _load_key_maps(
                     data = json.load(f)
                 player_keys = sorted(data["player_keys"])
                 bot_keys = sorted(data["bot_keys"])
-                player_map = {i: k for i, k in enumerate(player_keys)}
-                bot_map = {i: k for i, k in enumerate(bot_keys)}
-                log.info(
-                    "Loaded arena key maps from %s (%d player, %d bot keys)",
-                    json_path, len(player_map), len(bot_map),
+                if _is_valid_wire_map(player_keys) and _is_valid_wire_map(bot_keys):
+                    player_map = {i: k for i, k in enumerate(player_keys)}
+                    bot_map = {i: k for i, k in enumerate(bot_keys)}
+                    log.info(
+                        "Loaded arena key maps from %s (%d player, %d bot keys)",
+                        json_path, len(player_map), len(bot_map),
+                    )
+                    return player_map, bot_map
+                log.warning(
+                    "arena_key_maps.json at %s is not a usable client wire map "
+                    "(player=%d/bot=%d keys; duplicates or missing sentinels) — "
+                    "the gamedata pipeline changed the schema (group-based format "
+                    "in build 12668706+). Using hardcoded maps.",
+                    json_path, len(player_keys), len(bot_keys),
                 )
-                return player_map, bot_map
             except Exception:
                 log.warning(
                     "Failed to load arena_key_maps.json, using hardcoded maps",
