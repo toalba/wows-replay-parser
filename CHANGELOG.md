@@ -4,6 +4,8 @@ All notable changes to `wows-replay-parser` are documented here.
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-08-13
+
 ### Fixed
 - **Arena roster crash on patch 15.5 (build 12668706)** — `onArenaStateReceived`
   decoding crashed with `TypeError: int() argument must be a string, a
@@ -18,6 +20,11 @@ All notable changes to `wows-replay-parser` are documented here.
   duplicate names and maps missing sentinel fields) and falls back to the
   hardcoded maps when it isn't a usable client wire map. Also fixes the
   field-misalignment behind the "wrong names on ships" roster bug on 15.5.
+  The same misalignment has a second signature on the build-13015811 gamedata
+  tag, where `player_keys` is a 31-field list missing
+  `accountDBID`/`id`/`name`/`teamId` (plus a duplicate `keyTargetMarkers`):
+  sorted index 3 becomes `clanColor` while wire key 3 holds `camouflageInfo`,
+  crashing with `not 'CamouflageInfo'`. Both are rejected by the new validation.
 
 ## [0.1.2] — 2026-04-27
 
