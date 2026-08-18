@@ -269,10 +269,17 @@ Critical detail: types with an `<implementedBy>` tag → `streamSize() = -1`
 (variable) regardless of field contents. `compute_type_sort_size()` handles this
 via `TypeAlias.has_implemented_by`. 16 types in `alias.xml` carry this tag.
 
-The **auto-detector** (`method_id_detector.py`) is still enabled by default but
-is now redundant for Avatar and Vehicle. It may still help with Account entity
-tie groups (lobby/pre-battle methods) where the declaration order has not been
-verified.
+The **auto-detector** (`method_id_detector.py`) is redundant for Avatar and
+Vehicle and is therefore **disabled by default** (`auto_detect_methods=False`).
+It may still help with Account entity tie groups (lobby/pre-battle methods)
+where the declaration order has not been verified.
+
+Do not enable it to work around a version mismatch. The detector derives the
+mapping from observed payloads, so it can produce a *working* parse from
+mismatched `.def` files — which is precisely how a stale-gamedata render went
+unnoticed: build 13015811 parsed against v12830008 mis-mapped
+`updateMinimapVisionInfo`, and with the detector on, the breakage disappeared
+instead of being reported. Fix the gamedata version, not the mapping.
 
 ### Base Player Entity Type
 

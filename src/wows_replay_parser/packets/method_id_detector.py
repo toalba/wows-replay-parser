@@ -1,10 +1,15 @@
 """
 Auto-detect method_id -> method_name mapping from replay data.
 
-The .def-based sort-size ordering is correct for most methods but has tiebreak
-issues in the INFINITY group (sort_size=65536): ~15 Avatar and ~4 Vehicle methods
-are placed at wrong indices. This module refines the ordering by observing actual
-packet payloads and is enabled by default (auto_detect_methods=True).
+The .def-based sort-size ordering is correct for most methods but historically had
+tiebreak issues in the INFINITY group (sort_size=65536): ~15 Avatar and ~4 Vehicle
+methods were placed at wrong indices. Since the declaration-order tiebreak was
+verified, this module is redundant for Avatar and Vehicle and is DISABLED by
+default (auto_detect_methods=False).
+
+Do not enable it to paper over a gamedata/replay version mismatch: it will happily
+re-derive a working mapping from mismatched .def files, turning a loud failure into
+a silently degraded parse.
 
 Resolves method IDs by observing actual packet data:
 1. Fixed-size methods: match constant payload_length to expected arg byte sum

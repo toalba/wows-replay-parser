@@ -517,8 +517,10 @@ def parse_replay(
           for most methods but has known tiebreak issues in the INFINITY
           group (sort_size=65536) where ~15 methods are misplaced.
       Tier 2 (auto-detector): Refines the ordering by observing actual
-          packet payloads. Required for correct projectile/combat method
-          decoding. Enabled by default.
+          packet payloads. Disabled by default — the Tier 1 sort is verified
+          for Avatar and Vehicle, so the detector is redundant there and its
+          heuristics would mask a gamedata/replay version mismatch rather
+          than surface it.
 
     Args:
         replay_path: Path to the .wowsreplay file.
@@ -527,8 +529,10 @@ def parse_replay(
             matching gamedata version when replay version
             doesn't match. Requires git. Defaults to False.
         auto_detect_methods: If True, run the auto-detector to resolve
-            method ID ties from packet data. Should be True for correct
-            projectile parsing. Defaults to True.
+            method ID ties from packet data. Defaults to False; only needed
+            when the .def ordering is unverified for an entity (e.g. Account
+            tie groups). Requires gamedata matching the replay build —
+            enabling it on mismatched gamedata hides the mismatch.
 
     Returns:
         ParsedReplay with events, packets, and state queries.
