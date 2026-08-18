@@ -4,6 +4,8 @@ All notable changes to `wows-replay-parser` are documented here.
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-08-18
+
 ### Changed
 - **`merge_replays()` canonically orders the pair** — the replay whose
   recording player is on team 0 becomes `replay_a` regardless of argument
