@@ -13,6 +13,7 @@ real replay files.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 
 import pytest
 
@@ -498,6 +499,48 @@ def test_players_deduped() -> None:
     assert merged.players.count(shared) == 1
     assert other_a in merged.players
     assert other_b in merged.players
+
+
+# ─────────────────────── canonical replay order ────────────────────────
+
+
+def _recorder(team_id: int, name: str) -> SimpleNamespace:
+    """Player stub for the recording player (relation == 0)."""
+    return SimpleNamespace(
+        relation=0, team_id=team_id, name=name, ship_id=1, entity_id=0,
+    )
+
+
+def test_canonical_order_team0_recorder_becomes_replay_a() -> None:
+    """merge_replays puts the team-0 recorder first regardless of arg order."""
+    team0_replay = StubReplay(players=[_recorder(0, "alpha_rec")])
+    team1_replay = StubReplay(players=[_recorder(1, "bravo_rec")])
+
+    merged_fwd = merge_replays(team0_replay, team1_replay)
+    merged_rev = merge_replays(team1_replay, team0_replay)
+
+    assert merged_fwd.replay_a is team0_replay
+    assert merged_fwd.replay_b is team1_replay
+    assert merged_rev.replay_a is team0_replay
+    assert merged_rev.replay_b is team1_replay
+
+
+def test_canonical_order_keeps_order_without_recorder() -> None:
+    """No identifiable recorder in either replay → argument order preserved."""
+    a = StubReplay()
+    b = StubReplay()
+    merged = merge_replays(a, b)
+    assert merged.replay_a is a
+    assert merged.replay_b is b
+
+
+def test_canonical_order_keeps_order_for_same_team_recorders() -> None:
+    """Both recorders on the same team → argument order preserved."""
+    a = StubReplay(players=[_recorder(1, "rec_one")])
+    b = StubReplay(players=[_recorder(1, "rec_two")])
+    merged = merge_replays(a, b)
+    assert merged.replay_a is a
+    assert merged.replay_b is b
 
 
 # ─────────────────────────── map name ──────────────────────────────────

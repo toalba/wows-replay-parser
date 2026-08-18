@@ -4,6 +4,16 @@ All notable changes to `wows-replay-parser` are documented here.
 
 ## [Unreleased]
 
+### Changed
+- **`merge_replays()` canonically orders the pair** — the replay whose
+  recording player is on team 0 becomes `replay_a` regardless of argument
+  order. Dual-perspective renders previously colored replay A's team green
+  (ship icons, HP bars, consumable circles derive from replay A's
+  recorder-relative `relation`), while capture points, HUD, and rosters color
+  by raw team id (team 0 = green) — so passing the team-1 recorder's file
+  first produced contradictory team colors. The order is kept unchanged when
+  a recorder cannot be identified or both recorders share a team.
+
 ## [0.1.3] — 2026-08-13
 
 ### Fixed

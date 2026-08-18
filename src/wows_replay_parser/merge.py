@@ -81,6 +81,14 @@ B_ID_OFFSET: int = 1 << 30
 _EVENT_DEDUP_TOLERANCE_S: float = 0.25
 
 
+def _recorder_team(replay: ParsedReplay) -> int | None:
+    """Team id of the recording player (``relation == 0``), or ``None``."""
+    for p in replay.players:
+        if getattr(p, "relation", None) == 0:
+            return getattr(p, "team_id", None)
+    return None
+
+
 def _event_id_key(event: GameEvent) -> tuple | None:
     """Server-unique identity for an event, or ``None`` if it has none.
 
@@ -298,10 +306,7 @@ class MergedReplay:
     @staticmethod
     def _compute_owner_team(replay: ParsedReplay) -> int | None:
         """Team id of the recording player for ``replay``, or ``None``."""
-        for p in replay.players:
-            if getattr(p, "relation", None) == 0:
-                return p.team_id
-        return None
+        return _recorder_team(replay)
 
     @cached_property
     def _owner_team_a(self) -> int | None:
@@ -688,9 +693,16 @@ def merge_replays(
 
     Both replays must be from the same match (same arenaUniqueId).
 
+    The pair is canonically ordered before merging: the replay whose
+    recording player is on team 0 becomes ``replay_a`` regardless of
+    argument order, so the merged view (authoritative meta / battle
+    scalars, downstream team labeling) does not depend on which file the
+    caller passed first. The given order is kept only when a recorder
+    cannot be identified or both recorders share a team.
+
     Args:
-        replay_a: First replay (typically your team's perspective).
-        replay_b: Second replay (opponent team's perspective).
+        replay_a: First replay.
+        replay_b: Second replay (the other team's perspective).
 
     Returns:
         MergedReplay with combined events and state queries.
@@ -717,6 +729,21 @@ def merge_replays(
             f"{replay_a.map_name!r} vs {replay_b.map_name!r}"
         )
         raise ValueError(msg)
+
+    # Canonical ordering: ``replay_a`` is authoritative for meta / battle
+    # scalars and downstream consumers label and color by it, so normalize
+    # the pair to put the team-0 recorder's replay first. This makes the
+    # merged view independent of the order the caller supplied the files in.
+    # If either recorder is unidentifiable, or both are on the same team,
+    # the given order is kept.
+    team_a = _recorder_team(replay_a)
+    team_b = _recorder_team(replay_b)
+    if team_a is not None and team_b is not None and team_a > team_b:
+        _log.info(
+            "merge: swapping replay order for canonical team-0-first view "
+            "(recorder teams %d vs %d)", team_a, team_b,
+        )
+        replay_a, replay_b = replay_b, replay_a
 
     # Match entities between replays
     entity_map = match_entities(replay_a, replay_b)
