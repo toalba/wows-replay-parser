@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from lxml import etree
 
@@ -51,6 +52,11 @@ class AliasRegistry:
 
     def __init__(self) -> None:
         self._aliases: dict[str, TypeAlias] = {}
+        # Memo for nested_property._resolve_type_structure. It belongs to the
+        # registry, not to that module: a type name means different things in
+        # different patches, so a process-wide memo would let the first
+        # gamedata version loaded answer for every later one.
+        self._type_structure_cache: dict[str, Any] = {}
 
     @classmethod
     def from_file(cls, path: Path) -> AliasRegistry:

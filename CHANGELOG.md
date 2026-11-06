@@ -4,6 +4,35 @@ All notable changes to `wows-replay-parser` are documented here.
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-11-06
+
+### Fixed
+- **Nested-property structures are no longer shared between gamedata
+  versions.** `_resolve_type_structure` memoized into a module-global dict
+  keyed by type name alone, ignoring the `AliasRegistry` it was handed. A
+  type name describes a different field layout in each patch, so in a
+  process that parsed replays from two patches the first one seen answered
+  for all later ones, and nested-property updates were routed down the wrong
+  field path. Visible symptom: `BattleState.team_scores` frozen at the
+  opening score for the whole match (the live `missions.teamsScore[*].score`
+  updates were dropped) while everything else decoded correctly, since only
+  nested properties were affected. The memo now lives on the
+  `AliasRegistry`, so its lifetime is the gamedata version.
+- **`PacketDecoder` instances are no longer leaked.** `_find_array_paths`
+  was decorated with `functools.lru_cache`, which puts `self` in the cache
+  key and keeps the cache on the function object — so every decoder ever
+  constructed stayed reachable, pinning its entity registry and schema
+  builder. Measured at ~40 MB retained per parse, which OOM-killed
+  long-lived worker processes. Now memoized per decoder instance.
+- **`__version__` matches the packaged version again** — it had been stuck
+  at "0.1.0" since 0.1.0, so installs self-reported the wrong version. A
+  test now pins it to `pyproject.toml`.
+
+### Notes
+- Both cache defects only bite processes that parse more than one replay,
+  which is why single-shot CLI use never showed them and long-lived render
+  workers did.
+
 ## [0.1.4] — 2026-08-18
 
 ### Changed

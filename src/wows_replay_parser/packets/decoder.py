@@ -15,7 +15,6 @@ Entity type resolution:
 
 from __future__ import annotations
 
-import functools
 import logging
 import struct
 from io import BytesIO
@@ -130,6 +129,11 @@ class PacketDecoder:
         self._tracker = tracker
         # Runtime entity_id → entity_type_name mapping
         self._entity_types: dict[int, str] = {}
+        # (entity_type, prop_idx) → nested ARRAY paths. Per decoder so the
+        # memo dies with it; see _find_array_paths.
+        self._array_paths_cache: dict[
+            tuple[str, int], list[tuple[str, ...]]
+        ] = {}
 
     def decode_stream(self, data: bytes) -> list[Packet]:
         """Decode all packets from the binary stream."""
@@ -966,21 +970,30 @@ class PacketDecoder:
                 if child:
                     self._collect_array_paths(child, prefix + (field_name,), aliases, result)
 
-    @functools.lru_cache(maxsize=256)
     def _find_array_paths(
         self, entity_type: str, prop_idx: int,
     ) -> list[tuple[str, ...]]:
-        """Return all path tuples that lead to ARRAY types in this property."""
+        """Return all path tuples that lead to ARRAY types in this property.
 
-        prop_def = self._entities.get_client_property(entity_type, prop_idx)
-        if prop_def is None:
-            return []
-        aliases = self._schema._aliases
-        type_info = _resolve_type_structure(prop_def.type_name, aliases)
-        if type_info is None:
-            return []
+        Memoized per decoder, deliberately. ``functools.lru_cache`` on a method
+        makes ``self`` part of the key, and the cache lives on the function
+        object, so every decoder ever constructed stays reachable along with
+        its entity registry and schema builder.
+        """
+        cache_key = (entity_type, prop_idx)
+        cached = self._array_paths_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         paths: list[tuple[str, ...]] = []
-        self._collect_array_paths(type_info, (), aliases, paths)
+        prop_def = self._entities.get_client_property(entity_type, prop_idx)
+        if prop_def is not None:
+            aliases = self._schema._aliases
+            type_info = _resolve_type_structure(prop_def.type_name, aliases)
+            if type_info is not None:
+                self._collect_array_paths(type_info, (), aliases, paths)
+
+        self._array_paths_cache[cache_key] = paths
         return paths
 
     def _get_tracked_arr_len(

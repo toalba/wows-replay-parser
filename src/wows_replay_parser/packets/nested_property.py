@@ -64,7 +64,21 @@ def _bits_for_count(count: int) -> int:
     return result
 
 
-_type_structure_cache: dict[str, dict[str, Any] | None] = {}
+def _structure_cache_for(aliases: AliasRegistry) -> dict[str, dict[str, Any] | None]:
+    """Return the memo dict belonging to *aliases*, creating it on first use.
+
+    The cache MUST hang off the registry rather than this module. A type name
+    like ``MISSIONS`` describes a different field layout in every patch, so a
+    module-global memo lets the first gamedata version loaded in the process
+    answer for all later ones. In a long-lived render worker that silently
+    routed nested-property updates down the wrong field path.
+    """
+    cache: dict[str, dict[str, Any] | None] = {}
+    try:
+        aliases._type_structure_cache = cache
+    except AttributeError:
+        pass  # exotic registry (e.g. __slots__): correctness without the memo
+    return cache
 
 
 def _resolve_type_structure(
@@ -78,14 +92,16 @@ def _resolve_type_structure(
         {"kind": "leaf", "type_name": type_name}
     or None if unresolvable.
     """
-    cached = _type_structure_cache.get(type_name)
-    if cached is not None:
-        return cached
-    if type_name in _type_structure_cache:
-        return None  # explicitly cached as None
+    cache: dict[str, dict[str, Any] | None]
+    try:
+        cache = aliases._type_structure_cache
+    except AttributeError:
+        cache = _structure_cache_for(aliases)
+    if type_name in cache:
+        return cache[type_name]
 
     result = _resolve_type_structure_impl(type_name, aliases)
-    _type_structure_cache[type_name] = result
+    cache[type_name] = result
     return result
 
 
