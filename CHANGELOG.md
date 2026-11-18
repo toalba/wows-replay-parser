@@ -4,6 +4,48 @@ All notable changes to `wows-replay-parser` are documented here.
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-11-18
+
+### Fixed
+- **Patch 15.10 battle results are decoded against the right schema.**
+  15.10 (build 13533378) inserted 12 columns into the vehicle-result tuple,
+  growing the `playersPublicInfo` row from 538 to 550 elements. Every field
+  from index 66 on shifted, reaching a flat +12 by index 270 — so `damage`
+  moved 426 → 438 and the ribbon counter block moved 481 → 493. The decoder
+  read the old offsets and returned plausible-looking nonsense: zero damage
+  and zero base XP for every player, and ribbon tallies off by 12 slots.
+  Nothing failed loudly, because the only guards anywhere tested for a row
+  that got *shorter*.
+
+  The schema is now selected by row width, and the ribbon base is derived
+  from it (`len(schema) + RIBBON_TAIL_GAP`) instead of hardcoded. The 15.10
+  tuple was recovered from the client bytecode (`scripts/m99f8902c.pyc`) and
+  is asserted equal to it; 15.9 (`scripts/m865ba929.pyc`) dumped identical
+  to the existing tuple, confirming 15.10 is the only break. The twelve
+  additions are `shots_phaser_laser{,_splash}`, `hits_phaser_laser_splash`,
+  `received_hits_phaser_laser{,_splash}`, `damage_phaser_laser_splash`,
+  `damage_event_3`, `received_damage_event_3`,
+  `received_damage_phaser_laser{,_splash}`, `damage_shields` and
+  `received_damage_shield`.
+
+  Verified on real 15.10 replays against ground truth independent of the
+  BattleResults schema: `PlayerInfo.max_health` from arena state (exact for
+  every player), summed live `DamageEvent`s (several players exact), and the
+  live ribbon stream (12/12 and 6/6 ribbon ids at base 493; 0/12 and 0/6 at
+  481).
+
+### Added
+- `PlayerBattleResult.schema` / `.schema_known`. An unrecognised row width
+  no longer decodes silently: it logs a warning, flags the row, and
+  suppresses ribbon counts, so consumers can degrade instead of publishing
+  figures the parser cannot vouch for.
+- `schema_for_row_length()`, `CLIENT_PUBLIC_RESULT_FIELDS_15_10`,
+  `VEH_BASE_RESULT_FIELDS_15_10`, `RIBBON_TAIL_GAP`.
+
+### Deprecated
+- `RIBBON_COUNT_BASE_INDEX` — the pre-15.10 constant, kept for
+  compatibility. Hardcoding it is the bug; use the schema-derived base.
+
 ## [0.1.5] — 2026-11-06
 
 ### Fixed

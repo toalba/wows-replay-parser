@@ -1,10 +1,13 @@
 """BattleResults (packet 0x22) structured decoder."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
 
 from wows_replay_parser.events.models import BattleResultsEvent
+
+log = logging.getLogger(__name__)
 
 PLAYER_INFO_FIELDS: tuple[str, ...] = (
     'account_db_id',
@@ -506,6 +509,85 @@ CLIENT_PUBLIC_RESULT_FIELDS: tuple[str, ...] = PLAYER_INFO_FIELDS + VEH_BASE_RES
 assert len(CLIENT_PUBLIC_RESULT_FIELDS) == 466
 
 
+# --- Patch 15.10 (build 13533378) -------------------------------------------
+#
+# 15.10 inserted 12 columns into the vehicle-result tuple, growing the
+# playersPublicInfo row from 538 to 550 elements. Recovered from the 15.10
+# client bytecode: scripts/m99f8902c.pyc, internally BattleResultsShared.
+# (The module name is obfuscated and rotates every build -- 15.9 is
+# m865ba929, 15.3 was m0b4b170b -- so locate it by content, not by name:
+# dump the ~128 root-level scripts/m*.pyc and grep for a known field such
+# as 'victory_points_cp_base_capture'.)
+#
+# 15.9's tuple dumped byte-identical to VEH_BASE_RESULT_FIELDS above, so
+# 15.10 is the only break. Every addition is a pure insertion -- nothing was
+# renamed or removed -- so the table below is expressed as insert positions
+# in the *pre-15.10* tuple. New weapon categories (phaser laser splash,
+# shields, a third damage event) propagate through the parallel shots_ /
+# hits_ / received_hits_ / damage_ / received_damage_ blocks.
+_VEH_BASE_15_10_INSERTIONS: tuple[tuple[int, tuple[str, ...]], ...] = (
+    (46, ('shots_phaser_laser', 'shots_phaser_laser_splash')),
+    (81, ('hits_phaser_laser_splash',)),
+    (102, ('received_hits_phaser_laser', 'received_hits_phaser_laser_splash')),
+    (174, ('damage_phaser_laser_splash',)),
+    (176, ('damage_event_3',)),
+    (204, ('received_damage_event_3', 'received_damage_phaser_laser',
+           'received_damage_phaser_laser_splash')),
+    (240, ('damage_shields', 'received_damage_shield')),
+)
+
+
+def _apply_insertions(
+    base: tuple[str, ...],
+    insertions: tuple[tuple[int, tuple[str, ...]], ...],
+) -> tuple[str, ...]:
+    """Splice new fields into a schema tuple at pre-insertion indices.
+
+    Applied back-to-front so each position still refers to ``base``.
+    """
+    out = list(base)
+    for index, names in sorted(insertions, reverse=True):
+        out[index:index] = names
+    return tuple(out)
+
+
+VEH_BASE_RESULT_FIELDS_15_10: tuple[str, ...] = _apply_insertions(
+    VEH_BASE_RESULT_FIELDS, _VEH_BASE_15_10_INSERTIONS
+)
+assert len(VEH_BASE_RESULT_FIELDS_15_10) == 458
+
+CLIENT_PUBLIC_RESULT_FIELDS_15_10: tuple[str, ...] = (
+    PLAYER_INFO_FIELDS + VEH_BASE_RESULT_FIELDS_15_10
+)
+assert len(CLIENT_PUBLIC_RESULT_FIELDS_15_10) == 478
+
+
+RIBBON_TAIL_GAP: int = 15
+"""Slots between the end of the named schema and the ribbon counter block.
+
+481 - 466 == 493 - 478 == 15, on every build measured. Deriving the ribbon
+base from the schema length keeps the two in step; the old hardcoded 481 is
+exactly what silently misread every 15.10 replay.
+"""
+
+_SCHEMA_BY_ROW_LENGTH: dict[int, tuple[str, ...]] = {
+    538: CLIENT_PUBLIC_RESULT_FIELDS,          # 15.3 .. 15.9
+    550: CLIENT_PUBLIC_RESULT_FIELDS_15_10,    # 15.10+
+}
+
+
+def schema_for_row_length(row_length: int) -> tuple[str, ...] | None:
+    """The playersPublicInfo schema for a row of this width.
+
+    Returns ``None`` for an unrecognised width. That is deliberate: the
+    15.10 break went unnoticed for two weeks because every guard tested
+    only for a row that got *shorter*, and a row that grew sailed through
+    and reported plausible garbage. An unknown width is a schema change
+    until proven otherwise.
+    """
+    return _SCHEMA_BY_ROW_LENGTH.get(row_length)
+
+
 PLAYER_PRIVATE_RESULT_FIELDS: tuple[str, ...] = (
     "team_id", "vehicle_type_id", "premium_type", "account_prev_tier",
     "account_points_prev", "init_economics", "common_economics",
@@ -528,7 +610,15 @@ assert len(PLAYER_PRIVATE_RESULT_FIELDS) == 55  # 46 real + 9 padding
 
 
 RIBBON_COUNT_BASE_INDEX: int = 481
-"""Base offset in the 538-element ``playersPublicInfo`` list where the
+"""Pre-15.10 ribbon base. Kept for backwards compatibility only.
+
+.. deprecated::
+   Hardcoding this is what silently misread every 15.10 replay: the row
+   grew by 12 and the block moved to 493. Use ``RIBBON_TAIL_GAP`` with the
+   row's own schema (``len(schema) + RIBBON_TAIL_GAP``), which
+   :meth:`PlayerBattleResult.ribbon_count` now does.
+
+Base offset in the 538-element ``playersPublicInfo`` list where the
 dynamically-appended per-ribbon counters live, one per ribbon_id.
 
 Discovered empirically by correlating wire ribbon events against the tail
@@ -548,22 +638,32 @@ slot offsets line up with ribbon_id values.
 class PlayerBattleResult:
     """Post-battle stats for one player.
 
-    ``stats`` maps field names from the 466-element CLIENT_PUBLIC_RESULT
-    schema (``PLAYER_INFO_FIELDS + VEH_BASE_RESULT_FIELDS``) to values from
-    ``playersPublicInfo[dbid][0..465]``. Indices 466-537 are tail extras
-    built dynamically at server import time (ribbon counters from
+    ``stats`` maps field names from the build's CLIENT_PUBLIC_RESULT schema
+    to values from ``playersPublicInfo[dbid]``. The schema is chosen by row
+    width -- 466 fields for a 538-element row (15.3..15.9), 478 for a
+    550-element row (15.10+). The ~72 trailing slots are tail extras built
+    dynamically at server import time (ribbon counters from
     ``Ribbons.iterAll()``, SubRibbon counters, ship-config flags,
     presence-time extensions, interaction details) and are preserved in
     ``extra`` keyed by raw list index.
 
+    ``schema_known`` is False when the row width matches no known build. The
+    stats are then decoded on a best-effort basis and the ribbon tail reads
+    as empty, because its offset cannot be derived. Consumers that render
+    numbers to a user should degrade on that flag rather than publish
+    figures the parser cannot vouch for.
+
     For per-ribbon authoritative counts use :meth:`ribbon_counts` /
-    :meth:`ribbon_count` which read the tail ``[481 + ribbon_id]`` slot.
+    :meth:`ribbon_count`, which read ``raw[len(schema) + RIBBON_TAIL_GAP +
+    ribbon_id]``.
     """
 
     db_id: int
     stats: dict[str, Any] = field(default_factory=dict)
     extra: dict[int, Any] = field(default_factory=dict)
     raw: list = field(default_factory=list)
+    schema: tuple[str, ...] = CLIENT_PUBLIC_RESULT_FIELDS
+    schema_known: bool = True
 
     @property
     def name(self) -> str:
@@ -592,7 +692,9 @@ class PlayerBattleResult:
 
         Returns 0 if the slot is missing or the ribbon never fired.
         """
-        idx = RIBBON_COUNT_BASE_INDEX + ribbon_id
+        if not self.schema_known:
+            return 0
+        idx = len(self.schema) + RIBBON_TAIL_GAP + ribbon_id
         if idx >= len(self.raw):
             return 0
         val = self.raw[idx]
@@ -618,9 +720,15 @@ class PlayerBattleResult:
 class BattleResults:
     """Post-battle results from packet 0x22.
 
-    Schemas extracted from obfuscated ``scripts/m0b4b170b.pyc``
-    (internally referenced as ``BattleResultsShared``) on build 12267945
-    (15.3.0). Re-verify after patches.
+    Schemas extracted from the obfuscated ``BattleResultsShared`` module:
+    ``scripts/m0b4b170b.pyc`` on build 12267945 (15.3.0), re-dumped as
+    ``scripts/m865ba929.pyc`` on 13357625 (15.9, identical) and
+    ``scripts/m99f8902c.pyc`` on 13533378 (15.10, +12 fields).
+
+    Re-verify after every patch. The module name is obfuscated and rotates
+    per build, so find it by content rather than by name -- extract the
+    ~128 root-level ``scripts/m*.pyc`` and grep for a stable field name
+    such as ``victory_points_cp_base_capture``.
     """
 
     own_db_id: int
@@ -673,14 +781,35 @@ def _decode(results: dict) -> BattleResults:
 
 
 def _decode_player(db_id: int, raw_list: list) -> PlayerBattleResult:
+    schema = schema_for_row_length(len(raw_list))
+    known = schema is not None
+    if schema is None:
+        # Unknown width: decode with the widest schema that still fits so
+        # the leading identity fields stay usable, but flag the row. Never
+        # silently present a tail offset we cannot derive.
+        schema = max(
+            (s for s in _SCHEMA_BY_ROW_LENGTH.values() if len(s) <= len(raw_list)),
+            key=len,
+            default=CLIENT_PUBLIC_RESULT_FIELDS,
+        )
+        log.warning(
+            "playersPublicInfo row is %d elements, which matches no known "
+            "build (known: %s) -- the schema has moved. Decoding best-effort "
+            "with %d fields; ribbon counts suppressed.",
+            len(raw_list), sorted(_SCHEMA_BY_ROW_LENGTH), len(schema),
+        )
+
     stats: dict[str, Any] = {}
     extra: dict[int, Any] = {}
     for i, value in enumerate(raw_list):
-        if i < len(CLIENT_PUBLIC_RESULT_FIELDS):
-            stats[CLIENT_PUBLIC_RESULT_FIELDS[i]] = value
+        if i < len(schema):
+            stats[schema[i]] = value
         else:
             extra[i] = value
-    return PlayerBattleResult(db_id=db_id, stats=stats, extra=extra, raw=raw_list)
+    return PlayerBattleResult(
+        db_id=db_id, stats=stats, extra=extra, raw=raw_list,
+        schema=schema, schema_known=known,
+    )
 
 
 def _map_list(values: list, fields: tuple[str, ...]) -> dict[str, Any]:
