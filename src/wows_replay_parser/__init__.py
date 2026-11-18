@@ -5,7 +5,7 @@ Dynamic schema loading from wows-gamedata entity definitions.
 No hardcoded schemas, no manual updates per patch.
 """
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 from wows_replay_parser.api import ParsedReplay, parse_replay
 from wows_replay_parser.battle_results import (

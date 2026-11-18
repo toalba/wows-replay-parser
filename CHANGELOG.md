@@ -4,6 +4,8 @@ All notable changes to `wows-replay-parser` are documented here.
 
 ## [Unreleased]
 
+## [0.1.6] — 2026-11-18
+
 ### Fixed
 - **Patch 15.10 battle results are decoded against the right schema.**
   15.10 (build 13533378) inserted 12 columns into the vehicle-result tuple,
